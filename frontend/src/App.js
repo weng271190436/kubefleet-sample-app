@@ -2,11 +2,13 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { DataGrid } from '@mui/x-data-grid';
 import {
   AppBar, Toolbar, Typography, Container, Button, Box, Snackbar, Alert, Chip,
-  CssBaseline,
+  CssBaseline, IconButton,
 } from '@mui/material';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
+import DarkModeIcon from '@mui/icons-material/DarkMode';
+import LightModeIcon from '@mui/icons-material/LightMode';
 
 const API_BASE = process.env.REACT_APP_API_URL || '/api';
 
@@ -42,11 +44,23 @@ const columns = [
 ];
 
 export default function App() {
-  const darkTheme = useMemo(() => createTheme({
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('darkMode');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+
+  const theme = useMemo(() => createTheme({
     palette: {
-      mode: 'dark',
+      mode: darkMode ? 'dark' : 'light',
     },
-  }), []);
+  }), [darkMode]);
+
+  const toggleDarkMode = () => {
+    setDarkMode((prev) => {
+      localStorage.setItem('darkMode', JSON.stringify(!prev));
+      return !prev;
+    });
+  };
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -121,13 +135,16 @@ export default function App() {
   }, [selectedIds]);
 
   return (
-    <ThemeProvider theme={darkTheme}>
+    <ThemeProvider theme={theme}>
       <CssBaseline />
       <AppBar position="static">
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             KubeFleet Sample App — Banking Configuration
           </Typography>
+          <IconButton color="inherit" onClick={toggleDarkMode}>
+            {darkMode ? <LightModeIcon /> : <DarkModeIcon />}
+          </IconButton>
         </Toolbar>
       </AppBar>
       <Container maxWidth="lg" sx={{ mt: 4 }}>
