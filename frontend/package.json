@@ -1,0 +1,22 @@
+{
+  "name": "kubefleet-sample-ui",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@mui/material": "^6.0.0",
+    "@mui/x-data-grid": "^7.0.0",
+    "@emotion/react": "^11.0.0",
+    "@emotion/styled": "^11.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-scripts": "5.0.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build"
+  },
+  "browserslist": {
+    "production": [">0.2%", "not dead", "not op_mini all"],
+    "development": ["last 1 chrome version", "last 1 firefox version"]
+  }
+}

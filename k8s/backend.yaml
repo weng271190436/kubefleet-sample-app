@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-backend
+  labels:
+    app: sample-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sample-backend
+  template:
+    metadata:
+      labels:
+        app: sample-backend
+    spec:
+      containers:
+        - name: backend
+          image: sample-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-backend
+spec:
+  selector:
+    app: sample-backend
+  ports:
+    - port: 8000
+      targetPort: 8000
