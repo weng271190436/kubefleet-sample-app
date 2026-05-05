@@ -1,8 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { DataGrid } from '@mui/x-data-grid';
 import {
   AppBar, Toolbar, Typography, Container, Button, Box, Snackbar, Alert, Chip,
+  CssBaseline,
 } from '@mui/material';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 
@@ -40,6 +42,12 @@ const columns = [
 ];
 
 export default function App() {
+  const darkTheme = useMemo(() => createTheme({
+    palette: {
+      mode: 'dark',
+    },
+  }), []);
+
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -113,7 +121,8 @@ export default function App() {
   }, [selectedIds]);
 
   return (
-    <>
+    <ThemeProvider theme={darkTheme}>
+      <CssBaseline />
       <AppBar position="static">
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
@@ -163,6 +172,6 @@ export default function App() {
           </Alert>
         )}
       </Snackbar>
-    </>
+    </ThemeProvider>
   );
 }
