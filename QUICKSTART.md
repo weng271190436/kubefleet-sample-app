@@ -114,19 +114,19 @@ Open Headlamp in your browser at `http://localhost:8080`. You should see your Ki
 cd ~/kubefleet-sample-app
 
 # Log in to ghcr.io
-gh auth token | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+gh auth token | docker login ghcr.io -u weng271190436 --password-stdin
 
 # Build and push with a versioned tag
 VERSION=$(date +%Y%m%d%H%M%S)
 
-docker build -t ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/backend:$VERSION ./backend
-docker build -t ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/frontend:$VERSION ./frontend
+docker build -t ghcr.io/weng271190436/kubefleet-sample-app/backend:$VERSION ./backend
+docker build -t ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION ./frontend
 
-docker push ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/backend:$VERSION
-docker push ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/frontend:$VERSION
+docker push ghcr.io/weng271190436/kubefleet-sample-app/backend:$VERSION
+docker push ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION
 ```
 
-> **Note:** Make sure your ghcr.io packages are set to **public** so Kind nodes can pull them. You can change visibility at `https://github.com/users/YOUR_GITHUB_USERNAME/packages`.
+> **Note:** Make sure your ghcr.io packages are set to **public** so Kind nodes can pull them. You can change visibility at `https://github.com/users/weng271190436/packages`.
 
 ## 7. Deploy the sample app on the hub
 
@@ -138,9 +138,9 @@ kubectl --context kind-kf-hub-01 -n kubefleet-sample apply -f k8s/frontend.yaml
 
 # Set the versioned image tags
 kubectl --context kind-kf-hub-01 -n kubefleet-sample \
-  set image deploy/sample-backend backend=ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/backend:$VERSION
+  set image deploy/sample-backend backend=ghcr.io/weng271190436/kubefleet-sample-app/backend:$VERSION
 kubectl --context kind-kf-hub-01 -n kubefleet-sample \
-  set image deploy/sample-frontend frontend=ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/frontend:$VERSION
+  set image deploy/sample-frontend frontend=ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION
 ```
 
 Verify pods are running:
@@ -262,16 +262,16 @@ When you make changes to the app:
 VERSION=$(date +%Y%m%d%H%M%S)
 
 # Build and push
-docker build -t ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/backend:$VERSION ./backend
-docker build -t ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/frontend:$VERSION ./frontend
-docker push ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/backend:$VERSION
-docker push ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/frontend:$VERSION
+docker build -t ghcr.io/weng271190436/kubefleet-sample-app/backend:$VERSION ./backend
+docker build -t ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION ./frontend
+docker push ghcr.io/weng271190436/kubefleet-sample-app/backend:$VERSION
+docker push ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION
 
 # Update hub deployments (triggers a new resource snapshot)
 kubectl --context kind-kf-hub-01 -n kubefleet-sample \
-  set image deploy/sample-backend backend=ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/backend:$VERSION
+  set image deploy/sample-backend backend=ghcr.io/weng271190436/kubefleet-sample-app/backend:$VERSION
 kubectl --context kind-kf-hub-01 -n kubefleet-sample \
-  set image deploy/sample-frontend frontend=ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/frontend:$VERSION
+  set image deploy/sample-frontend frontend=ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION
 
 # Create a new staged update run to roll out to members
 kubectl --context kind-kf-hub-01 apply -f - <<EOF
