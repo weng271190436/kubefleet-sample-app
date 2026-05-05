@@ -65,6 +65,15 @@ kubectl --context kind-kf-hub-01 get memberclusters
 
 Both should show `JOINED: True`.
 
+Also verify the member agents are running on each member cluster:
+
+```bash
+kubectl --context kind-kf-member-01 get pods -n fleet-system
+kubectl --context kind-kf-member-02 get pods -n fleet-system
+```
+
+Each should show a `member-agent` pod in `Running` state.
+
 ## 4. Label member clusters
 
 Label member clusters for staged rollout:
