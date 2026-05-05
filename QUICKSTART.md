@@ -47,11 +47,11 @@ HUB_IP=$(docker inspect kf-hub-01-control-plane --format='{{range .NetworkSettin
 echo $HUB_IP
 ```
 
-Clone KubeFleet and run the join script for each member:
+Clone KubeFleet (if not already cloned) and run the join script for each member:
 
 ```bash
-git clone https://github.com/kubefleet-dev/kubefleet.git
-cd kubefleet/hack/quickstart
+git clone https://github.com/kubefleet-dev/kubefleet.git ~/kubefleet  # skip if already cloned
+cd ~/kubefleet/hack/quickstart
 
 ./join-member-clusters.sh 0.3.1 kind-kf-hub-01 https://${HUB_IP}:6443/ kind-kf-member-01
 ./join-member-clusters.sh 0.3.1 kind-kf-hub-01 https://${HUB_IP}:6443/ kind-kf-member-02
@@ -80,7 +80,7 @@ Start the Headlamp container with your kubeconfig and the plugin mounted:
 
 ```bash
 # Install the KubeFleet Headlamp plugin
-cd /path/to/kubefleet-headlamp-plugin
+cd ~/kubefleet-headlamp-plugin
 npm install
 npm start  # keep this running — it builds and copies the plugin
 ```
@@ -102,7 +102,7 @@ Open Headlamp in your browser at `http://localhost:8080`. You should see your Ki
 ## 6. Build and push the sample app
 
 ```bash
-cd /path/to/kubefleet-sample-app
+cd ~/kubefleet-sample-app
 
 # Log in to ghcr.io
 gh auth token | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
