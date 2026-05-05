@@ -113,8 +113,8 @@ Open Headlamp in your browser at `http://localhost:8080`. You should see your Ki
 ```bash
 cd ~/kubefleet-sample-app
 
-# Log in to ghcr.io
-gh auth token | docker login ghcr.io -u weng271190436 --password-stdin
+# Log in to ghcr.io (use a GitHub PAT with write:packages scope)
+echo "YOUR_GITHUB_PAT" | docker login ghcr.io -u weng271190436 --password-stdin
 
 # Build and push with a versioned tag
 VERSION=$(date +%Y%m%d%H%M%S)
