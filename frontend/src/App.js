@@ -9,10 +9,13 @@ import DeleteIcon from '@mui/icons-material/Delete';
 const API_BASE = process.env.REACT_APP_API_URL || '/api';
 
 const CATEGORY_COLORS = {
-  general: 'primary',
-  logging: 'warning',
-  database: 'error',
-  performance: 'success',
+  limits: 'primary',
+  fees: 'warning',
+  security: 'error',
+  rates: 'success',
+  compliance: 'secondary',
+  alerts: 'info',
+  operations: 'default',
 };
 
 const columns = [
@@ -24,7 +27,7 @@ const columns = [
     width: 150,
     editable: true,
     type: 'singleSelect',
-    valueOptions: ['general', 'logging', 'database', 'performance'],
+    valueOptions: ['limits', 'fees', 'security', 'rates', 'compliance', 'alerts', 'operations'],
     renderCell: (params) => (
       <Chip
         label={params.value}
@@ -83,7 +86,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/configs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'new.key', value: '', category: 'general' }),
+        body: JSON.stringify({ key: 'new.config.key', value: '', category: 'limits' }),
       });
       if (!res.ok) throw new Error('Create failed');
       const created = await res.json();
@@ -114,7 +117,7 @@ export default function App() {
       <AppBar position="static">
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            KubeFleet Sample App — Configuration
+            KubeFleet Sample App — Banking Configuration
           </Typography>
         </Toolbar>
       </AppBar>

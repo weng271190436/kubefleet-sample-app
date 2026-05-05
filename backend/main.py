@@ -18,14 +18,26 @@ configs: dict[str, dict] = {}
 
 # Seed some sample data
 for i, (key, value, category) in enumerate([
-    ("app.name", "kubefleet-sample", "general"),
-    ("app.version", "1.0.0", "general"),
-    ("log.level", "info", "logging"),
-    ("log.format", "json", "logging"),
-    ("db.host", "postgres.default.svc.cluster.local", "database"),
-    ("db.port", "5432", "database"),
-    ("cache.ttl", "300", "performance"),
-    ("cache.max_size", "1000", "performance"),
+    ("transaction.daily_limit", "50000", "limits"),
+    ("transaction.single_transfer_max", "10000", "limits"),
+    ("transaction.international_fee_pct", "1.5", "fees"),
+    ("transaction.domestic_fee", "0.50", "fees"),
+    ("transaction.wire_transfer_fee", "25.00", "fees"),
+    ("auth.session_timeout_min", "15", "security"),
+    ("auth.max_failed_attempts", "5", "security"),
+    ("auth.mfa_required", "true", "security"),
+    ("auth.password_expiry_days", "90", "security"),
+    ("interest.savings_apy", "4.25", "rates"),
+    ("interest.checking_apy", "0.50", "rates"),
+    ("interest.cd_12month_apy", "5.10", "rates"),
+    ("interest.mortgage_30yr_fixed", "6.875", "rates"),
+    ("compliance.kyc_verification", "enhanced", "compliance"),
+    ("compliance.aml_screening", "enabled", "compliance"),
+    ("compliance.pci_dss_mode", "strict", "compliance"),
+    ("notification.low_balance_threshold", "100", "alerts"),
+    ("notification.large_transaction_alert", "5000", "alerts"),
+    ("notification.fraud_detection", "realtime", "alerts"),
+    ("maintenance.next_window", "2026-05-10T02:00:00Z", "operations"),
 ], start=1):
     row_id = str(uuid.uuid4())
     configs[row_id] = {"id": row_id, "key": key, "value": value, "category": category}

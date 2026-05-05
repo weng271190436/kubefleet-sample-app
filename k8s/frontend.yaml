@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: sample-frontend:latest
+          image: ghcr.io/weng271190436/kubefleet-sample-app/frontend:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80
