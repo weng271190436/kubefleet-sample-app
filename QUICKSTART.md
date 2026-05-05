@@ -143,10 +143,10 @@ kubectl --context kind-kf-hub-01 -n kubefleet-sample \
   set image deploy/sample-frontend frontend=ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION
 ```
 
-Verify pods are running:
+Verify deployments are created:
 
 ```bash
-kubectl --context kind-kf-hub-01 -n kubefleet-sample get pods
+kubectl --context kind-kf-hub-01 -n kubefleet-sample get deploy
 ```
 
 ## 8. Create a ClusterResourcePlacement
