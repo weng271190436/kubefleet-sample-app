@@ -57,15 +57,7 @@ cd ~/kubefleet/hack/quickstart
 ./join-member-clusters.sh 0.3.1 kind-kf-hub-01 https://${HUB_IP}:6443/ kind-kf-member-02
 ```
 
-Verify both members joined:
-
-```bash
-kubectl --context kind-kf-hub-01 get memberclusters
-```
-
-Both should show `JOINED: True`.
-
-Also verify the member agents are running on each member cluster:
+Verify the member agents are running on each member cluster:
 
 ```bash
 kubectl --context kind-kf-member-01 get pods -n fleet-system
@@ -73,6 +65,14 @@ kubectl --context kind-kf-member-02 get pods -n fleet-system
 ```
 
 Each should show a `member-agent` pod in `Running` state.
+
+Then verify both members joined the hub:
+
+```bash
+kubectl --context kind-kf-hub-01 get memberclusters
+```
+
+Both should show `JOINED: True`.
 
 ## 4. Label member clusters
 
