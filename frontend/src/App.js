@@ -9,6 +9,7 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import LightModeIcon from '@mui/icons-material/LightMode';
+import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 
 const API_BASE = process.env.REACT_APP_API_URL || '/api';
 
@@ -66,6 +67,14 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState([]);
   const [snackbar, setSnackbar] = useState(null);
+  const [clusterName, setClusterName] = useState('');
+
+  useEffect(() => {
+    fetch(`${API_BASE}/cluster-info`)
+      .then((res) => res.json())
+      .then((data) => setClusterName(data.hostname || ''))
+      .catch(() => {});
+  }, []);
 
   const fetchConfigs = useCallback(async () => {
     setLoading(true);
@@ -137,11 +146,25 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <AppBar position="static">
+      <AppBar position="static" sx={{ background: 'linear-gradient(90deg, #1a237e 0%, #0d47a1 100%)' }}>
         <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            KubeFleet Sample App — Banking Configuration
-          </Typography>
+          <AccountBalanceIcon sx={{ mr: 1.5, fontSize: 28 }} />
+          <Box sx={{ flexGrow: 1 }}>
+            <Typography variant="h6" sx={{ lineHeight: 1.2 }}>
+              KubeFleet Banking Config
+            </Typography>
+            <Typography variant="caption" sx={{ opacity: 0.7 }}>
+              Multi-cluster Configuration Management
+            </Typography>
+          </Box>
+          {clusterName && (
+            <Chip
+              label={clusterName}
+              size="small"
+              sx={{ mr: 1, color: '#fff', borderColor: 'rgba(255,255,255,0.5)' }}
+              variant="outlined"
+            />
+          )}
           <IconButton color="inherit" onClick={toggleDarkMode}>
             {darkMode ? <LightModeIcon /> : <DarkModeIcon />}
           </IconButton>

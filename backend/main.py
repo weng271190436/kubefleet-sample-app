@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 import uuid
+import os
 
 app = FastAPI(title="KubeFleet Sample App - Config API")
 
@@ -89,3 +90,8 @@ def delete_config(config_id: str):
 @app.get("/healthz")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/cluster-info")
+def cluster_info():
+    return {"hostname": os.environ.get("HOSTNAME", "unknown")}
