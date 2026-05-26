@@ -5,19 +5,50 @@ to another with **zero downtime**, using [KubeFleet](https://kubefleet.dev) for
 placement control and [Cilium Cluster Mesh](https://docs.cilium.io/en/stable/network/clustermesh/)
 for cross-cluster traffic routing.
 
-**What you'll see:** the browser URL never changes, the port-forward never
-restarts, yet the app seamlessly migrates from `member-01` to `member-02`.
+**What you'll see:** the browser URL never changes, the proxy never restarts,
+yet the app seamlessly migrates from `member-01` to `member-02`.
+
+## Architecture
+
+```
+                     ┌───────────────────────────────────┐
+                     │          Hub Cluster               │
+                     │  CRP (PickAll) + ResourceOverrides │
+                     └───────────┬───────────────────────┘
+                                 │
+                ┌────────────────┼────────────────┐
+                ▼                                  ▼
+    ┌──────────────────┐             ┌──────────────────┐
+    │   member-01       │   Cilium   │   member-02       │
+    │   (staging)       │◄──Mesh────►│   (prod)          │
+    │   Namespace ✓     │            │   Namespace ✓     │
+    │   Service   ✓     │            │   Service   ✓     │
+    │   Pods: controlled│            │   Pods: controlled│
+    │   by override     │            │   by override     │
+    └──────────────────┘             └──────────────────┘
+            ▲
+            │ socat proxy (localhost:8081 → NodePort)
+            │
+       🌐 Browser
+```
+
+The CRP uses **PickAll** so the namespace, Services, and Deployments exist on
+**both** member clusters at all times. Pod replicas are controlled by
+**ResourceOverride** — scaling a cluster to zero stops its pods but keeps the
+Service, which is essential for Cilium global service routing.
 
 ## Prerequisites
 
-- [Docker](https://docs.docker.com/desktop/)
-- [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
-- [helm](https://helm.sh/docs/intro/install/)
-- [kubectl](https://kubernetes.io/docs/tasks/tools/)
-- [cilium CLI](https://docs.cilium.io/en/stable/gettingstarted/k8s-install-default/#install-the-cilium-cli)
-- [gh](https://cli.github.com/) (GitHub CLI, for pushing images to ghcr.io)
+| Tool | Purpose |
+|------|---------|
+| [Docker](https://docs.docker.com/desktop/) | Container runtime for Kind |
+| [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) | Local Kubernetes clusters |
+| [helm](https://helm.sh/docs/intro/install/) | Install KubeFleet charts |
+| [kubectl](https://kubernetes.io/docs/tasks/tools/) | Cluster management |
+| [cilium CLI](https://docs.cilium.io/en/stable/gettingstarted/k8s-install-default/#install-the-cilium-cli) | Install and manage Cilium |
+| [socat](https://linux.die.net/man/1/socat) | TCP proxy to Kind node (`apt install socat` / `brew install socat`) |
 
-## 1. Create Kind clusters with Cilium
+## 1. Create Kind clusters
 
 Create three clusters with the default CNI and kube-proxy disabled (Cilium
 replaces both):
@@ -28,27 +59,37 @@ kind create cluster --name kf-member-01 --config kind-cilium-config.yaml
 kind create cluster --name kf-member-02 --config kind-cilium-config.yaml
 ```
 
-## 2. Install Cilium on member clusters
+<details>
+<summary>kind-cilium-config.yaml</summary>
 
-The hub cluster only runs the KubeFleet control plane — it doesn't need Cilium
-mesh. Install Cilium on the two member clusters with unique cluster IDs:
+```yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true   # Cilium will replace the default CNI
+  kubeProxyMode: none        # Cilium replaces kube-proxy
+nodes:
+  - role: control-plane
+```
+</details>
+
+## 2. Install Cilium
+
+Install Cilium on all three clusters. The hub needs Cilium for pod networking
+but doesn't join the mesh. The two member clusters get unique cluster IDs for
+mesh identity:
 
 ```bash
+# Member clusters (with mesh IDs)
 cilium install --context kind-kf-member-01 --set cluster.id=1 --set cluster.name=member-01
 cilium install --context kind-kf-member-02 --set cluster.id=2 --set cluster.name=member-02
-```
 
-Wait for Cilium to be ready:
+# Hub (networking only, no mesh)
+cilium install --context kind-kf-hub-01 --set cluster.id=3 --set cluster.name=hub
 
-```bash
+# Wait for all to be ready
 cilium status --context kind-kf-member-01 --wait
 cilium status --context kind-kf-member-02 --wait
-```
-
-Install Cilium on the hub too (needed for pod networking, but no mesh):
-
-```bash
-cilium install --context kind-kf-hub-01 --set cluster.id=3 --set cluster.name=hub
 cilium status --context kind-kf-hub-01 --wait
 ```
 
@@ -60,14 +101,18 @@ Connect the two member clusters so they share service endpoints:
 cilium clustermesh enable --context kind-kf-member-01 --service-type NodePort
 cilium clustermesh enable --context kind-kf-member-02 --service-type NodePort
 
-# Wait for mesh to be ready
+# Wait for mesh control planes
 cilium clustermesh status --context kind-kf-member-01 --wait
 cilium clustermesh status --context kind-kf-member-02 --wait
 
-# Connect them (--allow-mismatching-ca needed because each Kind cluster has its own Cilium CA)
-cilium clustermesh connect --context kind-kf-member-01 --destination-context kind-kf-member-02 --allow-mismatching-ca
+# Connect them
+# (--allow-mismatching-ca is needed because each Kind cluster generates its own Cilium CA)
+cilium clustermesh connect \
+  --context kind-kf-member-01 \
+  --destination-context kind-kf-member-02 \
+  --allow-mismatching-ca
 
-# Verify the connection
+# Verify — should show "connected" with 1 remote cluster
 cilium clustermesh status --context kind-kf-member-01 --wait
 ```
 
@@ -83,33 +128,26 @@ helm upgrade --install hub-agent oci://ghcr.io/kubefleet-dev/kubefleet/charts/hu
     --namespace fleet-system \
     --create-namespace \
     --set logFileMaxSize=100000
-```
 
-Verify the hub agent is running:
-
-```bash
-kubectl get pods -n fleet-system
+kubectl get pods -n fleet-system   # verify it's running
 ```
 
 ### Join member clusters
 
 ```bash
-HUB_IP=$(docker inspect kf-hub-01-control-plane --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+HUB_IP=$(docker inspect kf-hub-01-control-plane \
+  --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
 
 cd ~/kubefleet/hack/quickstart
 ./join-member-clusters.sh 0.3.1 kind-kf-hub-01 https://${HUB_IP}:6443/ kind-kf-member-01
 ./join-member-clusters.sh 0.3.1 kind-kf-hub-01 https://${HUB_IP}:6443/ kind-kf-member-02
+
+kubectl --context kind-kf-hub-01 get memberclusters   # both should show JOINED: True
 ```
-
-Verify members joined:
-
-```bash
-kubectl --context kind-kf-hub-01 get memberclusters
-```
-
-Both should show `JOINED: True`.
 
 ### Label member clusters
+
+These labels are used by ResourceOverride to target specific clusters:
 
 ```bash
 kubectl --context kind-kf-hub-01 label membercluster kind-kf-member-01 environment=staging
@@ -124,20 +162,22 @@ cd ~/kubefleet-sample-app
 # Log in to ghcr.io (use a GitHub PAT with write:packages scope)
 echo "YOUR_GITHUB_PAT" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
 
-# Build and push with a versioned tag
 VERSION=$(date +%Y%m%d%H%M%S)
 
-docker build -t ghcr.io/weng271190436/kubefleet-sample-app/backend:$VERSION ./backend
-docker build -t ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION ./frontend
+docker build -t ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/backend:$VERSION ./backend
+docker build -t ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/frontend:$VERSION ./frontend
 
-docker push ghcr.io/weng271190436/kubefleet-sample-app/backend:$VERSION
-docker push ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION
+docker push ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/backend:$VERSION
+docker push ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/frontend:$VERSION
 ```
 
 > **Note:** Make sure your ghcr.io packages are set to **public** so Kind nodes
-> can pull them.
+> can pull them without image pull secrets.
 
 ## 6. Deploy the app on the hub
+
+The hub holds the "source of truth" resources. KubeFleet propagates them to
+member clusters via the CRP.
 
 ```bash
 kubectl --context kind-kf-hub-01 apply -f k8s/namespace.yaml
@@ -146,54 +186,90 @@ kubectl --context kind-kf-hub-01 -n kubefleet-sample apply -f k8s/frontend.yaml
 
 # Set the versioned image tags
 kubectl --context kind-kf-hub-01 -n kubefleet-sample \
-  set image deploy/sample-backend backend=ghcr.io/weng271190436/kubefleet-sample-app/backend:$VERSION
+  set image deploy/sample-backend backend=ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/backend:$VERSION
 kubectl --context kind-kf-hub-01 -n kubefleet-sample \
-  set image deploy/sample-frontend frontend=ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION
+  set image deploy/sample-frontend frontend=ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/frontend:$VERSION
 ```
 
-## 7. Create ResourceOverrides
+The Service YAMLs include Cilium global service annotations that make the
+Service discoverable across the mesh:
 
-These set the `CLUSTER_NAME` env var per member cluster so the UI shows which
-cluster is serving. **Create these before the CRP** so the override is included
-in the first resource snapshot:
+```yaml
+annotations:
+  io.cilium/global-service: "true"
+  io.cilium/shared-service: "true"
+```
+
+## 7. Phase 1 — App runs on member-01 only
+
+### Create ResourceOverrides and CRP
+
+ResourceOverrides control two things per cluster:
+1. **Replica count** — 0 to stop pods, 1 (default) to run them
+2. **CLUSTER_NAME env var** — so the UI shows which cluster is serving
+
+> **Important:** Create the overrides *before* the CRP. KubeFleet captures
+> overrides in the resource snapshot at CRP creation time.
 
 ```bash
-kubectl --context kind-kf-hub-01 apply -f k8s/cilium-demo/cluster-overrides.yaml
+cd ~/kubefleet-sample-app/k8s/cilium-demo
+
+# Apply phase 1 overrides: member-01 replicas=1, member-02 replicas=0
+kubectl --context kind-kf-hub-01 apply -f override-phase1-member01-only.yaml
+
+# Create the PickAll CRP — deploys to ALL member clusters
+kubectl --context kind-kf-hub-01 apply -f crp-pickall.yaml
 ```
 
-## 8. Deploy to member-01 only
-
-Create the CRP targeting just member-01:
-
-```bash
-kubectl --context kind-kf-hub-01 apply -f k8s/cilium-demo/crp-member01-only.yaml
-```
-
-Wait for the app to be running on member-01:
+Wait for pods on member-01:
 
 ```bash
 kubectl --context kind-kf-member-01 -n kubefleet-sample get pods -w
 ```
 
-### Open the app in your browser
-
-Start a port-forward from member-01 — **keep this running for the entire demo**:
+Verify member-02 has the namespace and Services but no running pods:
 
 ```bash
-kubectl --context kind-kf-member-01 port-forward -n kubefleet-sample svc/sample-frontend 8081:80 --address 0.0.0.0
+kubectl --context kind-kf-member-02 -n kubefleet-sample get deploy
+# READY should be 0/0 for both deployments
 ```
 
-Open `http://localhost:8081` in your browser.
+### Open the app in your browser
+
+Since both clusters have the Service, we use `socat` to proxy traffic through
+member-01's NodePort. This is more resilient than `kubectl port-forward` because
+it survives pod deletions — the proxy connects to the **Service**, not a pod.
+
+```bash
+# Get member-01's Kind node IP and the frontend NodePort
+MEMBER01_IP=$(docker inspect kf-member-01-control-plane \
+  --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+NODE_PORT=$(kubectl --context kind-kf-member-01 -n kubefleet-sample \
+  get svc sample-frontend -o jsonpath='{.spec.ports[0].nodePort}')
+
+echo "Proxying localhost:8081 → ${MEMBER01_IP}:${NODE_PORT}"
+
+# Start socat in the background — keep this running for the entire demo
+socat TCP-LISTEN:8081,fork,reuseaddr TCP:${MEMBER01_IP}:${NODE_PORT} &
+SOCAT_PID=$!
+echo "socat PID: $SOCAT_PID"
+```
+
+Open **http://localhost:8081** in your browser.
 
 You should see the banking config app with a green chip saying
 **"Serving from: member-01 (staging)"**.
 
-## 9. Expand to both clusters (bridge phase)
+## 8. Phase 2 — Expand to both clusters (bridge)
 
-Update the CRP to target both members:
+Update the overrides to run pods on both clusters:
 
 ```bash
-kubectl --context kind-kf-hub-01 apply -f k8s/cilium-demo/crp-both.yaml
+kubectl --context kind-kf-hub-01 apply -f override-phase2-both.yaml
+
+# Trigger re-reconciliation by annotating a hub resource
+kubectl --context kind-kf-hub-01 -n kubefleet-sample \
+  annotate deploy sample-backend demo-phase=2 --overwrite
 ```
 
 Wait for pods on member-02:
@@ -202,40 +278,80 @@ Wait for pods on member-02:
 kubectl --context kind-kf-member-02 -n kubefleet-sample get pods -w
 ```
 
-Refresh the browser a few times. You should see the chip alternate between
+**Refresh the browser** several times. You should see the chip alternate between
 **"member-01 (staging)"** and **"member-02 (prod)"** — Cilium Cluster Mesh is
 load-balancing across both clusters.
 
-> **Key insight:** The port-forward is still connected to member-01's Service,
-> but Cilium's global service routes requests to pods on *either* cluster.
+> **Key insight:** The socat proxy still points at member-01's NodePort, but
+> Cilium's global service routes requests to pods on *either* cluster. The
+> Service object on member-01 sees both local and remote endpoints.
 
-## 10. Complete the migration (drain member-01)
-
-Update the CRP to target only member-02:
-
-```bash
-kubectl --context kind-kf-hub-01 apply -f k8s/cilium-demo/crp-member02-only.yaml
-```
-
-KubeFleet removes the workload from member-01. Verify:
+### Verify both clusters are serving
 
 ```bash
-kubectl --context kind-kf-member-01 -n kubefleet-sample get pods
-# Should show no pods (or pods terminating)
+for i in $(seq 1 10); do
+  curl -s http://localhost:8081/api/cluster-info | python3 -c "import sys,json; print(json.load(sys.stdin)['cluster'])"
+done
 ```
 
-Refresh the browser. The chip now shows **"Serving from: member-02 (prod)"**
+You should see a mix of `member-01 (staging)` and `member-02 (prod)`.
+
+## 9. Phase 3 — Complete the migration (drain member-01)
+
+Update the overrides to stop pods on member-01 and keep them on member-02:
+
+```bash
+kubectl --context kind-kf-hub-01 apply -f override-phase3-member02-only.yaml
+
+# Trigger re-reconciliation
+kubectl --context kind-kf-hub-01 -n kubefleet-sample \
+  annotate deploy sample-backend demo-phase=3 --overwrite
+```
+
+Wait ~20 seconds, then verify:
+
+```bash
+# member-01: deployments scaled to 0, but Service still exists
+kubectl --context kind-kf-member-01 -n kubefleet-sample get deploy
+# READY: 0/0
+
+# member-02: app running
+kubectl --context kind-kf-member-02 -n kubefleet-sample get pods
+# READY: 1/1
+```
+
+**Refresh the browser.** The chip now shows **"Serving from: member-02 (prod)"**
 exclusively.
 
-**The URL never changed. The port-forward never restarted. Zero downtime.**
+```bash
+for i in $(seq 1 5); do
+  curl -s http://localhost:8081/api/cluster-info | python3 -c "import sys,json; print(json.load(sys.stdin)['cluster'])"
+done
+# All requests: member-02 (prod)
+```
 
-## 11. Verify
+**The URL never changed. The proxy never restarted. Zero downtime.**
+
+## 10. Verify
+
+### How traffic flows after migration
+
+```
+Browser → localhost:8081
+       → socat → member-01 NodePort
+       → member-01 Service (sample-frontend)
+       → Cilium sees no local endpoints, routes to remote
+       → member-02 pod (sample-frontend)
+       → member-02 pod (sample-backend) via global service
+       → response flows back
+```
 
 ### KubeFleet state
 
 ```bash
-kubectl --context kind-kf-hub-01 get clusterresourceplacements sample-crp -o yaml
+kubectl --context kind-kf-hub-01 get clusterresourceplacements sample-crp
 kubectl --context kind-kf-hub-01 get clusterresourcebindings -l crp=sample-crp
+kubectl --context kind-kf-hub-01 -n kubefleet-sample get resourceoverride
 ```
 
 ### Cilium state
@@ -244,25 +360,21 @@ kubectl --context kind-kf-hub-01 get clusterresourcebindings -l crp=sample-crp
 # Service endpoints on member-01 — should show remote endpoints from member-02
 cilium --context kind-kf-member-01 service list | grep sample
 
-# Confirm mesh connectivity
+# Mesh status
 cilium clustermesh status --context kind-kf-member-01
-```
-
-### Cluster workloads
-
-```bash
-# member-01: no app pods
-kubectl --context kind-kf-member-01 -n kubefleet-sample get pods
-
-# member-02: app running
-kubectl --context kind-kf-member-02 -n kubefleet-sample get pods
 ```
 
 ## Cleanup
 
 ```bash
+# Stop the socat proxy
+kill $SOCAT_PID 2>/dev/null
+
+# Remove KubeFleet resources
 kubectl --context kind-kf-hub-01 delete crp sample-crp
-kubectl --context kind-kf-hub-01 delete clusterresourceoverride cluster-name-member01 cluster-name-member02
+kubectl --context kind-kf-hub-01 -n kubefleet-sample delete resourceoverride backend-override frontend-override
+
+# Tear down clusters
 kind delete cluster --name kf-hub-01
 kind delete cluster --name kf-member-01
 kind delete cluster --name kf-member-02
@@ -272,11 +384,32 @@ kind delete cluster --name kf-member-02
 
 | Layer | Technology | Role |
 |-------|-----------|------|
-| **Placement** | KubeFleet CRP (PickFixed) | Decides *which* clusters run the app |
-| **Networking** | Cilium Cluster Mesh | Routes traffic to pods across clusters |
-| **Customization** | KubeFleet ClusterResourceOverride | Sets per-cluster env vars |
+| **Placement** | KubeFleet CRP (**PickAll**) | Deploys namespace + resources to *all* member clusters |
+| **Replica control** | KubeFleet **ResourceOverride** | Scales pods to 0 or 1 per cluster |
+| **Networking** | Cilium **Cluster Mesh** | Routes traffic to pods across clusters via global services |
+| **Customization** | ResourceOverride (env patch) | Sets per-cluster `CLUSTER_NAME` env var |
 
-The bridge phase (step 9) is the key: by briefly running on both clusters,
-traffic shifts gracefully from the old to the new location. Cilium's global
-service annotation makes the Kubernetes Service span cluster boundaries — any
-pod behind the Service, in any meshed cluster, can receive traffic.
+### Why PickAll + ResourceOverride instead of PickFixed?
+
+The naive approach is to use **PickFixed** and change which clusters the CRP
+targets. However, when KubeFleet removes a cluster from a PickFixed placement,
+it deletes the **entire namespace** on that cluster — including the Service.
+
+Cilium global services require the **Service object** to exist on both clusters.
+If the Service is deleted on member-01, Cilium has no local endpoint record and
+can't route traffic cross-cluster. The socat proxy (or any NodePort client)
+gets connection refused.
+
+**PickAll** solves this by keeping the namespace, Services, and Deployments on
+every member cluster at all times. ResourceOverride controls which clusters
+have *running pods* by patching `spec.replicas` to 0. The Service stays intact,
+Cilium keeps its global routing table, and traffic flows seamlessly to whichever
+cluster has pods.
+
+### Phase flow summary
+
+| Phase | member-01 pods | member-02 pods | Traffic goes to |
+|-------|---------------|---------------|-----------------|
+| 1. Initial | ✅ Running | ⬜ Scaled to 0 | member-01 only |
+| 2. Bridge | ✅ Running | ✅ Running | Both (Cilium LB) |
+| 3. Migrated | ⬜ Scaled to 0 | ✅ Running | member-02 only |

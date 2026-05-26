@@ -1,7 +1,10 @@
+# Phase 1: App runs only on member-01
+# member-01 (staging): replicas=1, member-02 (prod): replicas=0
+---
 apiVersion: placement.kubernetes-fleet.io/v1beta1
 kind: ResourceOverride
 metadata:
-  name: cluster-name-override
+  name: backend-override
   namespace: kubefleet-sample
 spec:
   resourceSelectors:
@@ -27,5 +30,31 @@ spec:
                   environment: prod
         jsonPatchOverrides:
           - op: replace
+            path: /spec/replicas
+            value: 0
+          - op: replace
             path: /spec/template/spec/containers/0/env/0/value
             value: "member-02 (prod)"
+---
+apiVersion: placement.kubernetes-fleet.io/v1beta1
+kind: ResourceOverride
+metadata:
+  name: frontend-override
+  namespace: kubefleet-sample
+spec:
+  resourceSelectors:
+    - group: apps
+      kind: Deployment
+      version: v1
+      name: sample-frontend
+  policy:
+    overrideRules:
+      - clusterSelector:
+          clusterSelectorTerms:
+            - labelSelector:
+                matchLabels:
+                  environment: prod
+        jsonPatchOverrides:
+          - op: replace
+            path: /spec/replicas
+            value: 0

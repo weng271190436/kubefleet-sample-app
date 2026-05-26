@@ -9,6 +9,4 @@ spec:
       version: v1
       name: kubefleet-sample
   policy:
-    placementType: PickFixed
-    clusterNames:
-      - kind-kf-member-01
+    placementType: PickAll

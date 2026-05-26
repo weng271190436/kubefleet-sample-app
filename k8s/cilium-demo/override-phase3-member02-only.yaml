@@ -1,0 +1,60 @@
+# Phase 3: App runs only on member-02 (migration complete)
+# member-01 (staging): replicas=0, member-02 (prod): replicas=1
+---
+apiVersion: placement.kubernetes-fleet.io/v1beta1
+kind: ResourceOverride
+metadata:
+  name: backend-override
+  namespace: kubefleet-sample
+spec:
+  resourceSelectors:
+    - group: apps
+      kind: Deployment
+      version: v1
+      name: sample-backend
+  policy:
+    overrideRules:
+      - clusterSelector:
+          clusterSelectorTerms:
+            - labelSelector:
+                matchLabels:
+                  environment: staging
+        jsonPatchOverrides:
+          - op: replace
+            path: /spec/replicas
+            value: 0
+          - op: replace
+            path: /spec/template/spec/containers/0/env/0/value
+            value: "member-01 (staging)"
+      - clusterSelector:
+          clusterSelectorTerms:
+            - labelSelector:
+                matchLabels:
+                  environment: prod
+        jsonPatchOverrides:
+          - op: replace
+            path: /spec/template/spec/containers/0/env/0/value
+            value: "member-02 (prod)"
+---
+apiVersion: placement.kubernetes-fleet.io/v1beta1
+kind: ResourceOverride
+metadata:
+  name: frontend-override
+  namespace: kubefleet-sample
+spec:
+  resourceSelectors:
+    - group: apps
+      kind: Deployment
+      version: v1
+      name: sample-frontend
+  policy:
+    overrideRules:
+      - clusterSelector:
+          clusterSelectorTerms:
+            - labelSelector:
+                matchLabels:
+                  environment: staging
+        jsonPatchOverrides:
+          - op: replace
+            path: /spec/replicas
+            value: 0
