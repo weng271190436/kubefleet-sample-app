@@ -160,15 +160,15 @@ kubectl --context kind-kf-hub-01 label membercluster kind-kf-member-02 region=we
 cd ~/kubefleet-sample-app
 
 # Log in to ghcr.io (use a GitHub PAT with write:packages scope)
-echo "YOUR_GITHUB_PAT" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+echo "YOUR_GITHUB_PAT" | docker login ghcr.io -u weng271190436 --password-stdin
 
 VERSION=$(date +%Y%m%d%H%M%S)
 
-docker build -t ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/backend:$VERSION ./backend
-docker build -t ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/frontend:$VERSION ./frontend
+docker build -t ghcr.io/weng271190436/kubefleet-sample-app/backend:$VERSION ./backend
+docker build -t ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION ./frontend
 
-docker push ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/backend:$VERSION
-docker push ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/frontend:$VERSION
+docker push ghcr.io/weng271190436/kubefleet-sample-app/backend:$VERSION
+docker push ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION
 ```
 
 > **Note:** Make sure your ghcr.io packages are set to **public** so Kind nodes
@@ -186,9 +186,9 @@ kubectl --context kind-kf-hub-01 -n kubefleet-sample apply -f k8s/frontend.yaml
 
 # Set the versioned image tags
 kubectl --context kind-kf-hub-01 -n kubefleet-sample \
-  set image deploy/sample-backend backend=ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/backend:$VERSION
+  set image deploy/sample-backend backend=ghcr.io/weng271190436/kubefleet-sample-app/backend:$VERSION
 kubectl --context kind-kf-hub-01 -n kubefleet-sample \
-  set image deploy/sample-frontend frontend=ghcr.io/YOUR_GITHUB_USERNAME/kubefleet-sample-app/frontend:$VERSION
+  set image deploy/sample-frontend frontend=ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION
 ```
 
 The Service YAMLs include Cilium global service annotations that make the
