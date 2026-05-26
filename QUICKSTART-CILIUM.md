@@ -262,9 +262,15 @@ You should see the banking config app with a green chip saying
 
 ## 8. Phase 2 — Expand to both clusters (bridge)
 
-Update the overrides to run pods on both clusters:
+Update the overrides to run pods on both clusters. The frontend-override is no
+longer needed (no replicas to suppress), so delete it:
 
 ```bash
+# Delete the frontend-override (both clusters should run frontend)
+kubectl --context kind-kf-hub-01 -n kubefleet-sample \
+  delete resourceoverride frontend-override
+
+# Update the backend-override (remove replica suppression, keep CLUSTER_NAME)
 kubectl --context kind-kf-hub-01 apply -f override-phase2-both.yaml
 
 # Trigger re-reconciliation by annotating a hub resource
@@ -298,7 +304,8 @@ You should see a mix of `member-01 (staging)` and `member-02 (prod)`.
 
 ## 9. Phase 3 — Complete the migration (drain member-01)
 
-Update the overrides to stop pods on member-01 and keep them on member-02:
+Update the overrides to stop pods on member-01 and keep them on member-02.
+Phase 3 re-creates the frontend-override (to scale member-01 frontend to 0):
 
 ```bash
 kubectl --context kind-kf-hub-01 apply -f override-phase3-member02-only.yaml

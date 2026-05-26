@@ -32,17 +32,4 @@ spec:
           - op: replace
             path: /spec/template/spec/containers/0/env/0/value
             value: "member-02 (prod)"
----
-apiVersion: placement.kubernetes-fleet.io/v1beta1
-kind: ResourceOverride
-metadata:
-  name: frontend-override
-  namespace: kubefleet-sample
-spec:
-  resourceSelectors:
-    - group: apps
-      kind: Deployment
-      version: v1
-      name: sample-frontend
-  policy:
-    overrideRules: []
+
