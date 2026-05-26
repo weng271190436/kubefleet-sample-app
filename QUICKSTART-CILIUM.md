@@ -20,7 +20,7 @@ yet the app seamlessly migrates from `member-01` to `member-02`.
                 ▼                                  ▼
     ┌──────────────────┐             ┌──────────────────┐
     │   member-01       │   Cilium   │   member-02       │
-    │   (staging)       │◄──Mesh────►│   (prod)          │
+    │   (eastus)        │◄──Mesh────►│   (westus)        │
     │   Namespace ✓     │            │   Namespace ✓     │
     │   Service   ✓     │            │   Service   ✓     │
     │   Pods: controlled│            │   Pods: controlled│
@@ -150,8 +150,8 @@ kubectl --context kind-kf-hub-01 get memberclusters   # both should show JOINED:
 These labels are used by ResourceOverride to target specific clusters:
 
 ```bash
-kubectl --context kind-kf-hub-01 label membercluster kind-kf-member-01 environment=staging
-kubectl --context kind-kf-hub-01 label membercluster kind-kf-member-02 environment=prod
+kubectl --context kind-kf-hub-01 label membercluster kind-kf-member-01 region=eastus
+kubectl --context kind-kf-hub-01 label membercluster kind-kf-member-02 region=westus
 ```
 
 ## 5. Build and push the sample app
@@ -200,7 +200,7 @@ annotations:
   io.cilium/shared-service: "true"
 ```
 
-## 7. Phase 1 — App runs on member-01 only
+## 7. Phase 1 — App runs on member-01 (eastus) only
 
 ### Create ResourceOverrides and CRP
 
@@ -214,7 +214,7 @@ ResourceOverrides control two things per cluster:
 ```bash
 cd ~/kubefleet-sample-app/k8s/cilium-demo
 
-# Apply phase 1 overrides: member-01 replicas=1, member-02 replicas=0
+# Apply phase 1 overrides: member-01 (eastus) replicas=1, member-02 (westus) replicas=0
 kubectl --context kind-kf-hub-01 apply -f override-phase1-member01-only.yaml
 
 # Create the PickAll CRP — deploys to ALL member clusters
@@ -258,7 +258,7 @@ echo "socat PID: $SOCAT_PID"
 Open **http://localhost:8081** in your browser.
 
 You should see the banking config app with a green chip saying
-**"Serving from: member-01 (staging)"**.
+**"Serving from: member-01 (eastus)"**.
 
 ## 8. Phase 2 — Expand to both clusters (bridge)
 
@@ -285,7 +285,7 @@ kubectl --context kind-kf-member-02 -n kubefleet-sample get pods -w
 ```
 
 **Refresh the browser** several times. You should see the chip alternate between
-**"member-01 (staging)"** and **"member-02 (prod)"** — Cilium Cluster Mesh is
+**"member-01 (eastus)"** and **"member-02 (westus)"** — Cilium Cluster Mesh is
 load-balancing across both clusters.
 
 > **Key insight:** The socat proxy still points at member-01's NodePort, but
@@ -300,12 +300,12 @@ for i in $(seq 1 10); do
 done
 ```
 
-You should see a mix of `member-01 (staging)` and `member-02 (prod)`.
+You should see a mix of `member-01 (eastus)` and `member-02 (westus)`.
 
-## 9. Phase 3 — Complete the migration (drain member-01)
+## 9. Phase 3 — Complete the migration (drain eastus)
 
 Update the overrides to stop pods on member-01 and keep them on member-02.
-Phase 3 re-creates the frontend-override (to scale member-01 frontend to 0):
+Phase 3 re-creates the frontend-override (to scale eastus frontend to 0):
 
 ```bash
 kubectl --context kind-kf-hub-01 apply -f override-phase3-member02-only.yaml
@@ -327,14 +327,14 @@ kubectl --context kind-kf-member-02 -n kubefleet-sample get pods
 # READY: 1/1
 ```
 
-**Refresh the browser.** The chip now shows **"Serving from: member-02 (prod)"**
+**Refresh the browser.** The chip now shows **"Serving from: member-02 (westus)"**
 exclusively.
 
 ```bash
 for i in $(seq 1 5); do
   curl -s http://localhost:8081/api/cluster-info | python3 -c "import sys,json; print(json.load(sys.stdin)['cluster'])"
 done
-# All requests: member-02 (prod)
+# All requests: member-02 (westus)
 ```
 
 **The URL never changed. The proxy never restarted. Zero downtime.**
@@ -417,6 +417,6 @@ cluster has pods.
 
 | Phase | member-01 pods | member-02 pods | Traffic goes to |
 |-------|---------------|---------------|-----------------|
-| 1. Initial | ✅ Running | ⬜ Scaled to 0 | member-01 only |
+| 1. Initial | ✅ Running | ⬜ Scaled to 0 | eastus only |
 | 2. Bridge | ✅ Running | ✅ Running | Both (Cilium LB) |
-| 3. Migrated | ⬜ Scaled to 0 | ✅ Running | member-02 only |
+| 3. Migrated | ⬜ Scaled to 0 | ✅ Running | westus only |

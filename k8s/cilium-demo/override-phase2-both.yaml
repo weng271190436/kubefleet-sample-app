@@ -1,5 +1,5 @@
 # Phase 2: App runs on BOTH clusters (bridge phase)
-# member-01 (staging): replicas=1, member-02 (prod): replicas=1
+# member-01 (eastus): replicas=1, member-02 (westus): replicas=1
 ---
 apiVersion: placement.kubernetes-fleet.io/v1beta1
 kind: ResourceOverride
@@ -18,18 +18,18 @@ spec:
           clusterSelectorTerms:
             - labelSelector:
                 matchLabels:
-                  environment: staging
+                  region: eastus
         jsonPatchOverrides:
           - op: replace
             path: /spec/template/spec/containers/0/env/0/value
-            value: "member-01 (staging)"
+            value: "member-01 (eastus)"
       - clusterSelector:
           clusterSelectorTerms:
             - labelSelector:
                 matchLabels:
-                  environment: prod
+                  region: westus
         jsonPatchOverrides:
           - op: replace
             path: /spec/template/spec/containers/0/env/0/value
-            value: "member-02 (prod)"
+            value: "member-02 (westus)"
 
