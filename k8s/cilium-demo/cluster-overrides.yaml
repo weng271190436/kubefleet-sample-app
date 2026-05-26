@@ -1,9 +1,10 @@
 apiVersion: placement.kubernetes-fleet.io/v1beta1
-kind: ClusterResourceOverride
+kind: ResourceOverride
 metadata:
-  name: cluster-name-member01
+  name: cluster-name-override
+  namespace: kubefleet-sample
 spec:
-  clusterResourceSelectors:
+  resourceSelectors:
     - group: apps
       kind: Deployment
       version: v1
@@ -19,19 +20,6 @@ spec:
           - op: replace
             path: /spec/template/spec/containers/0/env/0/value
             value: "member-01 (staging)"
----
-apiVersion: placement.kubernetes-fleet.io/v1beta1
-kind: ClusterResourceOverride
-metadata:
-  name: cluster-name-member02
-spec:
-  clusterResourceSelectors:
-    - group: apps
-      kind: Deployment
-      version: v1
-      name: sample-backend
-  policy:
-    overrideRules:
       - clusterSelector:
           clusterSelectorTerms:
             - labelSelector:

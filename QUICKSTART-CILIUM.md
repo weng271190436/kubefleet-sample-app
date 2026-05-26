@@ -64,8 +64,8 @@ cilium clustermesh enable --context kind-kf-member-02 --service-type NodePort
 cilium clustermesh status --context kind-kf-member-01 --wait
 cilium clustermesh status --context kind-kf-member-02 --wait
 
-# Connect them
-cilium clustermesh connect --context kind-kf-member-01 --destination-context kind-kf-member-02
+# Connect them (--allow-mismatching-ca needed because each Kind cluster has its own Cilium CA)
+cilium clustermesh connect --context kind-kf-member-01 --destination-context kind-kf-member-02 --allow-mismatching-ca
 
 # Verify the connection
 cilium clustermesh status --context kind-kf-member-01 --wait
@@ -151,10 +151,11 @@ kubectl --context kind-kf-hub-01 -n kubefleet-sample \
   set image deploy/sample-frontend frontend=ghcr.io/weng271190436/kubefleet-sample-app/frontend:$VERSION
 ```
 
-## 7. Create ClusterResourceOverrides
+## 7. Create ResourceOverrides
 
 These set the `CLUSTER_NAME` env var per member cluster so the UI shows which
-cluster is serving:
+cluster is serving. **Create these before the CRP** so the override is included
+in the first resource snapshot:
 
 ```bash
 kubectl --context kind-kf-hub-01 apply -f k8s/cilium-demo/cluster-overrides.yaml
