@@ -94,4 +94,7 @@ def health():
 
 @app.get("/api/cluster-info")
 def cluster_info():
-    return {"hostname": os.environ.get("HOSTNAME", "unknown")}
+    return {
+        "hostname": os.environ.get("HOSTNAME", "unknown"),
+        "cluster": os.environ.get("CLUSTER_NAME", ""),
+    }

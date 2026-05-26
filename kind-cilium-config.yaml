@@ -1,0 +1,7 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true   # Cilium will replace the default CNI
+  kubeProxyMode: none        # Cilium replaces kube-proxy
+nodes:
+  - role: control-plane

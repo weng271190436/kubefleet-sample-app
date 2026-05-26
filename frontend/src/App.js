@@ -72,7 +72,7 @@ export default function App() {
   useEffect(() => {
     fetch(`${API_BASE}/cluster-info`)
       .then((res) => res.json())
-      .then((data) => setClusterName(data.hostname || ''))
+      .then((data) => setClusterName(data.cluster || data.hostname || ''))
       .catch(() => {});
   }, []);
 
@@ -159,10 +159,9 @@ export default function App() {
           </Box>
           {clusterName && (
             <Chip
-              label={clusterName}
+              label={`Serving from: ${clusterName}`}
               size="small"
-              sx={{ mr: 1, color: '#fff', borderColor: 'rgba(255,255,255,0.5)' }}
-              variant="outlined"
+              sx={{ mr: 1, color: '#fff', backgroundColor: 'rgba(76,175,80,0.7)', fontWeight: 'bold' }}
             />
           )}
           <IconButton color="inherit" onClick={toggleDarkMode}>

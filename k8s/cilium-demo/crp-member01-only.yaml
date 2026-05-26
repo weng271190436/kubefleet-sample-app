@@ -1,0 +1,14 @@
+apiVersion: placement.kubernetes-fleet.io/v1
+kind: ClusterResourcePlacement
+metadata:
+  name: sample-crp
+spec:
+  resourceSelectors:
+    - group: ""
+      kind: Namespace
+      version: v1
+      name: kubefleet-sample
+  policy:
+    placementType: PickFixed
+    clusterNames:
+      - kind-kf-member-01
