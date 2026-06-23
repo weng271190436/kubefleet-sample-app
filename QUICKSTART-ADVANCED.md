@@ -607,7 +607,7 @@ spec:
       afterStageTasks:
         - type: TimedWait
           waitTime: 30s
-    - name: prod-like
+    - name: prodlike
       labelSelector:
         matchExpressions:
           - key: environment
@@ -634,8 +634,9 @@ Note the differences:
 - Approval is on `approvalrequests` (short name `areq`) instead of
   `clusterapprovalrequests`
 - The plugin lists these alongside the cluster-scoped ones in the same pages
+- Stage names must match `^[a-z0-9]+$` — no hyphens or uppercase letters
 
-Approve `web-rollout-001-before-prod-like` from **Pending Approvals** when
+Approve `web-rollout-001-before-prodlike` from **Pending Approvals** when
 prompted.
 
 ## 15. Clean up
