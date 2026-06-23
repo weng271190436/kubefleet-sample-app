@@ -13,15 +13,16 @@ have demonstrated:
 | **Pause / Resume** mid-rollout via `state: Stop` / `state: Run` | step 9 |
 | **Rollback** by pinning a previous `resourceSnapshotIndex` | step 12 |
 | Browse versioned `ClusterResourceSnapshot`s | step 11 |
-| `ResourceOverride` — different config per stage, snapshot-and-roll-back | step 13 |
+| `ResourceOverride` — per-stage `CLUSTER_NAME` from the first rollout | step 7b |
+| Layering a **second** `ResourceOverride` for per-stage replica counts | step 13 |
 | Namespace-scoped surface (`ResourcePlacement` + `StagedUpdateRun`) — second persona | step 14 |
 
 The setup uses **4 member clusters** so ordering and concurrency are visible.
 
-Steps 1–12 are one continuous demo on a single placement. Steps 13 and 14 each
-exercise a distinct part of the staged-update feature surface — step 13 layers
-overrides onto the existing placement; step 14 is a parallel walkthrough that
-repeats the flow with the namespace-scoped CRDs.
+Steps 1–12 are one continuous demo on a single placement. Step 13 layers a
+*second* override on top of the existing one to demonstrate override stacking
+(per-stage replica counts). Step 14 is a parallel walkthrough that repeats the
+flow with the namespace-scoped CRDs.
 
 ## Prerequisites
 
@@ -154,7 +155,9 @@ kubectl --context $HUB -n kubefleet-sample apply -f k8s/frontend.yaml
 (If you have a custom image tag, run the `kubectl set image ...` commands from
 the basic quickstart now.)
 
-## 7. Create the placement (External strategy)
+## 7. Create the placement and the per-stage CLUSTER_NAME override
+
+### 7a. ClusterResourcePlacement
 
 In Headlamp → **Resource Placements → + CREATE** (or `kubectl apply`):
 
@@ -177,6 +180,74 @@ spec:
 
 > **Important:** Because the strategy is `External`, no resource snapshot exists
 > yet. The first UpdateRun will create one on initialization.
+
+### 7b. ResourceOverride: stamp the stage name into CLUSTER_NAME
+
+We want every cluster to render its stage label in the app's
+`Serving from:` chip from the very first rollout — not `unknown`. A
+`ResourceOverride` does that without changing the hub-side Deployment.
+
+> **Why `ResourceOverride`, not `ClusterResourceOverride`?**
+>
+> `ClusterResourceOverride` selectors only accept cluster-scoped resources or a
+> whole namespace (`selectionScope: NamespaceWithResources`). If you select the
+> namespace, the JSON patches are applied to **every** resource in it. With
+> `op: replace` on `/spec/template/spec/containers/0/env/0/value`, the patch
+> fails for the Namespace and the two Services (they don't have that path),
+> which blocks the rollout with
+> `OverriddenFailed: doc is missing path: …`.
+>
+> `ResourceOverride` is namespaced and lets us target **only the Deployment**,
+> so the patch path always exists.
+
+```yaml
+apiVersion: placement.kubernetes-fleet.io/v1alpha1
+kind: ResourceOverride
+metadata:
+  name: backend-cluster-name
+  namespace: kubefleet-sample
+spec:
+  placement:
+    name: sample-crp
+  resourceSelectors:
+    - group: apps
+      kind: Deployment
+      version: v1
+      name: sample-backend
+  policy:
+    overrideRules:
+      - clusterSelector:
+          clusterSelectorTerms:
+            - labelSelector:
+                matchLabels:
+                  environment: staging
+        jsonPatchOverrides:
+          - op: replace
+            path: /spec/template/spec/containers/0/env/0/value
+            value: "STAGING"
+      - clusterSelector:
+          clusterSelectorTerms:
+            - labelSelector:
+                matchLabels:
+                  environment: canary
+        jsonPatchOverrides:
+          - op: replace
+            path: /spec/template/spec/containers/0/env/0/value
+            value: "CANARY"
+      - clusterSelector:
+          clusterSelectorTerms:
+            - labelSelector:
+                matchLabels:
+                  environment: prod
+        jsonPatchOverrides:
+          - op: replace
+            path: /spec/template/spec/containers/0/env/0/value
+            value: "PROD"
+```
+
+The override is now in place but **nothing happens yet** — overrides are only
+applied at UpdateRun initialization. The next run we create (step 9) will
+capture this override into a snapshot and apply it during rollout.
 
 ## 8. Create an advanced ClusterStagedUpdateStrategy
 
@@ -312,8 +383,9 @@ kubectl --context kind-kf-member-01 port-forward -n kubefleet-sample \
 ```
 
 Open `http://localhost:8081`. The page loads with chip
-**`Serving from: unknown`** — that's the hub-side baseline. The other three
-members still don't have the namespace.
+**`Serving from: STAGING`** — the per-stage override from step 7b is already
+in effect for this cluster. The other three members still don't have the
+namespace.
 
 ### 10b. Pause and resume mid-rollout (optional)
 
@@ -356,7 +428,7 @@ kubectl --context kind-kf-member-03 port-forward -n kubefleet-sample \
   svc/sample-frontend 8083:80 --address 0.0.0.0
 ```
 
-Open `http://localhost:8083` — chip **`Serving from: unknown`**.
+Open `http://localhost:8083` — chip **`Serving from: CANARY`**.
 Tab `:8082` still refuses connections — proof that the stage is serialised,
 not parallel.
 
@@ -367,7 +439,7 @@ kubectl --context kind-kf-member-02 port-forward -n kubefleet-sample \
   svc/sample-frontend 8082:80 --address 0.0.0.0
 ```
 
-Open `http://localhost:8082` — chip **`Serving from: unknown`**. Three members
+Open `http://localhost:8082` — chip **`Serving from: CANARY`**. Three members
 are now serving.
 
 ### 10d. Approve after-canary (after the 1 min soak)
@@ -386,9 +458,9 @@ kubectl --context kind-kf-member-04 port-forward -n kubefleet-sample \
   svc/sample-frontend 8084:80 --address 0.0.0.0
 ```
 
-Open `http://localhost:8084` — chip **`Serving from: unknown`**. All four tabs
-now show the app — every member received the workload in the strict order
-defined by the strategy.
+Open `http://localhost:8084` — chip **`Serving from: PROD`**. All four tabs
+now show the app, each labelled with the stage that put it there — the entire
+fleet was filled in by a single staged rollout with one approval per gate.
 
 ```bash
 kubectl --context kind-kf-hub-01 get csur sample-run-001
@@ -396,8 +468,8 @@ kubectl --context kind-kf-hub-01 get csur sample-run-001
 # sample-run-001  ... True         False        True
 ```
 
-The chip values are all `unknown` because there are no overrides yet — step 13
-will make them flip per stage. Keep all four port-forward terminals running.
+Keep all four port-forward terminals running. Step 13 will layer a *second*
+override on top to make the per-stage pod counts diverge.
 
 ## 11. Inspect the auto-created resource snapshot
 
@@ -414,8 +486,17 @@ In Headlamp → **Staged Resources** click into the snapshot to see exactly whic
 resources were captured. Look at the `sample-backend` Deployment under
 `spec.selectedResources` — you should see `replicas: 1` and
 `env: [{name: CLUSTER_NAME, value: unknown}]`. **This is the hub-side
-baseline** — every member starts from this; per-cluster differences come from
-overrides (step 13) or rolling forward to a later snapshot (step 12).
+baseline** — the per-stage `STAGING/CANARY/PROD` values you see in the tabs
+come from the override snapshot, **not** from this resource snapshot. They're
+stored separately so they can be combined and rolled back independently.
+
+Also list the override snapshots:
+
+```bash
+kubectl --context kind-kf-hub-01 get resourceoverridesnapshots -A
+# NAMESPACE          NAME                         AGE
+# kubefleet-sample   backend-cluster-name-0       …
+```
 
 ### 11a. Inspect what's actually on each member (Headlamp)
 
@@ -427,10 +508,10 @@ Headlamp's built-in cluster switcher:
 1. Top-left cluster dropdown → switch to `kind-kf-member-01`.
 2. **Workloads → Deployments** → namespace `kubefleet-sample` → `sample-backend`.
 3. Open the **Pod template → Containers** section and confirm
-   `env: CLUSTER_NAME = unknown` and `replicas: 1`.
-4. Repeat for `kind-kf-member-02`, `kind-kf-member-03`, `kind-kf-member-04`.
-   Right now all four show the same values — there are no overrides yet, and
-   only one snapshot exists.
+   `env: CLUSTER_NAME = STAGING` and `replicas: 1`.
+4. Repeat for `kind-kf-member-02` (`CANARY`), `kind-kf-member-03` (`CANARY`),
+   `kind-kf-member-04` (`PROD`). The values match the stage labels because
+   the override was applied at run init.
 
 Remember to switch the dropdown **back to `kind-kf-hub-01`** before using the
 **KubeFleet Manager** pages, otherwise they will be empty (the fleet CRDs
@@ -508,8 +589,10 @@ spec:
 ```
 
 Approve each gate as before. When it completes, all 4 member clusters are back
-on the resources captured in `sample-crp-0-snapshot`. Verify on any member —
-the backend should be back to **1 replica**:
+on the resources captured in `sample-crp-0-snapshot`. The chips stay
+`STAGING / CANARY / CANARY / PROD` throughout — the cluster-name override
+survives the rollback. Verify on any member that the backend went back to
+**1 replica**:
 
 ```bash
 kubectl --context kind-kf-member-04 -n kubefleet-sample \
@@ -533,34 +616,32 @@ To make the version flip visible in the UI:
    two backend pods responding (round-robin) on the loaded clusters; after the
    rollback the pod count drops back to 1 per cluster.
 
-## 13. Per-stage configuration via ResourceOverride
+## 13. Layer a second override — per-stage replica counts
 
-Staged updates and overrides are designed to work together: when an UpdateRun
-initializes, it captures **override snapshots** alongside the resource snapshot.
-That means overrides participate in rollback (step 12) and roll out through the
-same stages and gates.
+Step 7b's `backend-cluster-name` override stamps the stage label into
+`CLUSTER_NAME`. Now we layer a **second** `ResourceOverride` on top of the
+same Deployment to scale the backend differently in each stage:
 
-We'll give each stage a different `CLUSTER_NAME` value. The sample backend
-already reads `CLUSTER_NAME` from its env, so no app changes are needed.
+| Stage | Replicas |
+| --- | --- |
+| staging | 2 |
+| canary | 3 |
+| prod | 4 |
 
-> **Why `ResourceOverride`, not `ClusterResourceOverride`?**
->
-> `ClusterResourceOverride` selectors only accept cluster-scoped resources or a
-> whole namespace (`selectionScope: NamespaceWithResources`). If you select the
-> namespace, the JSON patches are applied to **every** resource in it. With
-> `op: replace` on `/spec/template/spec/containers/0/env/0/value`, the patch
-> fails for the Namespace and the two Services (they don't have that path),
-> which blocks the rollout with
-> `OverriddenFailed: doc is missing path: …`.
->
-> `ResourceOverride` is namespaced and lets us target **only the Deployment**,
-> so the patch path always exists.
+This demonstrates two things:
+
+1. **Multiple overrides stack** on the same selected resource — fleet captures
+   both override snapshots at run init and applies both during rollout.
+2. **The first override survives** — chips stay `STAGING / CANARY / CANARY /
+   PROD`, proving the new override didn't replace the old one.
+
+Apply the second override:
 
 ```yaml
 apiVersion: placement.kubernetes-fleet.io/v1alpha1
 kind: ResourceOverride
 metadata:
-  name: backend-cluster-name
+  name: backend-replicas
   namespace: kubefleet-sample
 spec:
   placement:
@@ -579,8 +660,8 @@ spec:
                   environment: staging
         jsonPatchOverrides:
           - op: replace
-            path: /spec/template/spec/containers/0/env/0/value
-            value: "STAGING"
+            path: /spec/replicas
+            value: 2
       - clusterSelector:
           clusterSelectorTerms:
             - labelSelector:
@@ -588,8 +669,8 @@ spec:
                   environment: canary
         jsonPatchOverrides:
           - op: replace
-            path: /spec/template/spec/containers/0/env/0/value
-            value: "CANARY"
+            path: /spec/replicas
+            value: 3
       - clusterSelector:
           clusterSelectorTerms:
             - labelSelector:
@@ -597,12 +678,24 @@ spec:
                   environment: prod
         jsonPatchOverrides:
           - op: replace
-            path: /spec/template/spec/containers/0/env/0/value
-            value: "PROD"
+            path: /spec/replicas
+            value: 4
 ```
 
-Trigger another UpdateRun (`sample-run-003`, `state: Run`) and walk it through
-gates. If a stage gets stuck on **`StageUpdatingStarted`** without progress,
+Then create the run:
+
+```yaml
+apiVersion: placement.kubernetes-fleet.io/v1
+kind: ClusterStagedUpdateRun
+metadata:
+  name: sample-run-003
+spec:
+  placementName: sample-crp
+  stagedRolloutStrategyName: sample-advanced-strategy
+  state: Run
+```
+
+If a stage gets stuck on **`StageUpdatingStarted`** without progress,
 inspect the binding for that cluster:
 
 ```bash
@@ -611,95 +704,86 @@ kubectl --context kind-kf-hub-01 get clusterresourcebinding \
   -o jsonpath='{range .items[*].status.conditions[?(@.type=="Overridden")]}{.status} {.reason} {.message}{"\n"}{end}'
 ```
 
-`Overridden=False` with reason `OverriddenFailed` means the JSON patch couldn't
+`Overridden=False` with reason `OverriddenFailed` means a JSON patch couldn't
 apply — fix the override path/scope before the rollout can proceed.
 
-### 13a. Live walkthrough — flip each chip as its stage lands
+### 13a. Live walkthrough — watch pod counts diverge stage-by-stage
 
-The most compelling demo is to keep the four browser tabs from step 11a open
-and reload each one *as its stage finishes*. Before starting, every tab should
-read `Serving from: unknown`.
-
-Open a watch window on the run in one terminal:
+Keep your four browser tabs from step 10 open (they should still read
+`STAGING / CANARY / CANARY / PROD`). Open a watch in one terminal:
 
 ```bash
-watch kubectl --context kind-kf-hub-01 get csur sample-run-003
+watch -n 2 "for i in 01 02 03 04; do \
+  printf 'kind-kf-member-%s pods: ' \$i; \
+  kubectl --context kind-kf-member-\$i -n kubefleet-sample get pods \
+    -l app=sample-backend --no-headers 2>/dev/null | wc -l; \
+done"
 ```
 
-And keep the four port-forward terminals running so the tabs can be reloaded
-on demand. Also keep Headlamp open on the hub at
-**KubeFleet Manager → Staged Rollout Runs → `sample-run-003`** — the
-**Stage Status** table updates live and shows which cluster is "updating"
-right now.
+Right now every line reads `1`. Walk the run through:
 
-Now drive the rollout:
+1. **Patch run to `Run`** (or apply with `state: Run`). Staging starts.
+2. **Staging completes** → `member-01` pod count flips `1 → 2`.
+3. **Approve `sample-run-003-before-canary`.**
+4. **member-03 succeeds** → `member-03` pod count flips `1 → 3`.
+   `member-02` is still 1 (proof of `maxConcurrency: 1`).
+5. **member-02 succeeds** → `member-02` pod count flips `1 → 3`.
+6. **1 m `TimedWait`** → approve `sample-run-003-after-canary`.
+7. **Approve `sample-run-003-before-prod`** → `member-04` flips `1 → 4`.
 
-1. **Apply the override + create the run** (from above). Watch the run move
-   from `Initialized=True` to `Progressing=True`. The staging stage begins
-   immediately.
-2. **Staging completes** (~30s rollout + 30s `TimedWait`).
-   → Reload `http://localhost:8081`. Chip: **`STAGING`**.
-   The other three tabs still show `unknown`.
-3. **Approve `sample-run-003-before-canary`** in
-   **Pending Approvals** (or via the kubectl patch from step 10b).
-   The canary stage starts. Because `sortingLabelKey: order` and
-   `maxConcurrency: 1`, member-03 (`order=1`) updates first, then member-02.
-4. **member-03 succeeds** (the Stage Status table shows it as completed
-   while member-02 is still pending).
-   → Reload `http://localhost:8083`. Chip: **`CANARY`**.
-   Tab :8082 still shows `unknown` for a few more seconds — proof that the
-   stage is serialised, not parallel.
-5. **member-02 succeeds**.
-   → Reload `http://localhost:8082`. Chip: **`CANARY`**.
-6. Canary after-stage tasks run — the **1 m `TimedWait`** elapses, then the
-   `Approval` task creates `sample-run-003-after-canary`. **Approve it.**
-7. **Approve `sample-run-003-before-prod`** when it appears. The prod stage
-   updates member-04.
-8. **member-04 succeeds.**
-   → Reload `http://localhost:8084`. Chip: **`PROD`**.
+End state:
 
-End state — reload all four tabs once more:
-
-| Tab | URL | Expected `Serving from:` chip |
+| Cluster | Replicas | Chip |
 | --- | --- | --- |
-| member-01 | `http://localhost:8081` | `STAGING` |
-| member-02 | `http://localhost:8082` | `CANARY` |
-| member-03 | `http://localhost:8083` | `CANARY` |
-| member-04 | `http://localhost:8084` | `PROD` |
+| `kind-kf-member-01` (staging) | 2 | `STAGING` |
+| `kind-kf-member-02` (canary)  | 3 | `CANARY` |
+| `kind-kf-member-03` (canary)  | 3 | `CANARY` |
+| `kind-kf-member-04` (prod)    | 4 | `PROD` |
 
-If a chip still says `unknown` after the matching stage shows `Succeeded`,
-the old pod is still terminating — wait a few seconds for the override-rolled
-pod to come up, then refresh.
-
-You can also confirm everything via kubectl:
+Confirm with:
 
 ```bash
 for i in 01 02 03 04; do
   echo -n "kind-kf-member-$i: "
   kubectl --context kind-kf-member-$i -n kubefleet-sample \
-    get deploy sample-backend -o jsonpath='{.spec.template.spec.containers[0].env[0].value}'
+    get deploy sample-backend \
+    -o jsonpath='replicas={.spec.replicas} CLUSTER_NAME={.spec.template.spec.containers[0].env[0].value}'
   echo
 done
 ```
 
+Reload the four browser tabs once more — chips are unchanged
+(`STAGING / CANARY / CANARY / PROD`). **Two overrides stacked, no conflict.**
+
 ### 13b. Hub-side metadata in the KubeFleet Manager plugin
 
-Once the run finishes, switch Headlamp's cluster dropdown to `kind-kf-hub-01`
-and confirm the override machinery from the hub side:
+Switch Headlamp's cluster dropdown to `kind-kf-hub-01`:
 
-- **Staged Resources** → latest snapshot → `CLUSTER_NAME = unknown` on the
-  baseline. Overrides are *not* part of the resource snapshot — they live as
-  separate override snapshots.
-- **Resource Overrides** → `backend-cluster-name` → the details page lists
-  the three per-environment JSON patches.
+- **Staged Resources → latest snapshot** → `CLUSTER_NAME = unknown` and
+  `replicas: 1`. Overrides are *not* part of the resource snapshot — they live
+  as separate override snapshots.
+- **Resource Overrides** → you should see **both** `backend-cluster-name` and
+  `backend-replicas` in the `kubefleet-sample` namespace; each details page
+  shows its three per-environment JSON patches.
 - **Staged Rollout Runs → `sample-run-003`** → Stage Status table; each
-  cluster row lists its `clusterResourceOverrideSnapshots` (e.g.
-  `backend-cluster-name-0`), proving the override was bound to the run.
+  cluster row's `clusterResourceOverrideSnapshots` lists **both** override
+  snapshots, e.g. `backend-cluster-name-0` *and* `backend-replicas-0`. This
+  is fleet's audit trail of "which overrides shipped to which cluster".
 
-Proof that overrides are versioned with the run: if you now create another
-rollback run pinning `resourceSnapshotIndex: "0"`, the overrides revert along
-with the resources — reload the four tabs again and every chip flips back to
-`unknown`.
+Also list the override snapshots from kubectl:
+
+```bash
+kubectl --context kind-kf-hub-01 get resourceoverridesnapshots \
+  -n kubefleet-sample
+# NAME                       AGE
+# backend-cluster-name-0     …
+# backend-replicas-0         …
+```
+
+> **Try it:** delete `backend-replicas`, then trigger a new UpdateRun. After
+> the rollout, every cluster goes back to 1 replica — but chips still read
+> `STAGING / CANARY / CANARY / PROD` because the first override is untouched.
+> This is what makes per-aspect, per-stage overrides composable.
 
 ## 14. Namespace-scoped staged update (second persona)
 
@@ -844,7 +928,7 @@ HUB=kind-kf-hub-01
 kubectl --context $HUB delete csur --all
 kubectl --context $HUB delete clusterapprovalrequest --all
 kubectl --context $HUB delete clusterstagedupdatestrategy sample-advanced-strategy
-kubectl --context $HUB -n kubefleet-sample delete resourceoverride backend-cluster-name --ignore-not-found
+kubectl --context $HUB -n kubefleet-sample delete resourceoverride backend-cluster-name backend-replicas --ignore-not-found
 kubectl --context $HUB delete crp sample-crp my-app-ns-only --ignore-not-found
 kubectl --context $HUB delete ns kubefleet-sample my-app-ns --ignore-not-found
 
@@ -866,8 +950,10 @@ By the end of this guide you have:
 6. Driven multiple rollouts and inspected the **immutable snapshots** that the
    system creates.
 7. Performed a **rollback** by pinning a previous `resourceSnapshotIndex`.
-8. Applied **`ResourceOverride`** to ship different config per stage and
-   confirmed that override snapshots are captured per run and revert on
-   rollback.
+8. Applied **two stacked `ResourceOverride`s** — the first stamps a per-stage
+   `CLUSTER_NAME` (step 7b, visible in every rollout from step 10 onward),
+   the second sets per-stage replica counts (step 13). Confirmed both
+   coexist and both are captured in `clusterResourceOverrideSnapshots` on
+   each binding.
 9. Mirrored the flow with the **namespace-scoped** CRDs to exercise the
    second persona (app team, no cluster-admin).
