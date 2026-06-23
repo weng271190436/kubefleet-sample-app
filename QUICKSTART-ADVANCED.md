@@ -568,9 +568,15 @@ kubectl --context $HUB -n my-app-ns create deploy web --image=nginx:1.25
 kubectl --context $HUB -n my-app-ns expose deploy web --port=80
 ```
 
-Now the namespace-scoped objects:
+Now the namespace-scoped objects. **Apply via `kubectl` rather than
+Headlamp's + CREATE form** — that form expects a single object per submission
+and rejects multi-document YAML with
+`metadata.resourceVersion: Invalid value: 0: must be specified for an update`.
+If you prefer the UI, create the `ResourcePlacement`, `StagedUpdateStrategy`
+and `StagedUpdateRun` as three separate creates.
 
-```yaml
+```bash
+kubectl --context kind-kf-hub-01 apply -f - <<'EOF'
 ---
 apiVersion: placement.kubernetes-fleet.io/v1
 kind: ResourcePlacement
@@ -626,6 +632,7 @@ spec:
   placementName: web-placement
   stagedRolloutStrategyName: web-strategy
   state: Run
+EOF
 ```
 
 Note the differences:
