@@ -118,16 +118,24 @@ npm start                     # keep running in this terminal
 In another terminal:
 
 ```bash
+# If something else is already on 8090 (Tilt, Spring Boot, etc.), pick another
+# free port and update --port and the URL below.
+docker rm -f headlamp 2>/dev/null
 docker run -d --name headlamp \
   --network=host \
   -u $(id -u):$(id -g) \
   -v ~/.kube:/home/headlamp/.kube:ro \
   -v ~/.config/Headlamp/plugins:/headlamp/plugins:ro \
   ghcr.io/headlamp-k8s/headlamp:v0.41.0 \
-  -kubeconfig /home/headlamp/.kube/config -port 8080
+  -kubeconfig /home/headlamp/.kube/config -port 8090
 ```
 
-Open `http://localhost:8080` → **KubeFleet Manager → Configure Plugin** and pick
+> **Port-in-use?** `--network=host` binds directly to the host. Common
+> offenders on 8080/8090: `tilt`, Spring Boot, other dev servers. Check with
+> `ss -ltnp 'sport = :8090'`. Also remember to `docker rm -f headlamp` before
+> re-running — otherwise `docker run` fails with exit 125 (name conflict).
+
+Open `http://localhost:8090` → **KubeFleet Manager → Configure Plugin** and pick
 `kind-kf-hub-01` as the hub cluster.
 
 In **Member Clusters** you should now see four entries with the labels you just
