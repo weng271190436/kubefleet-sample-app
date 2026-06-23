@@ -13,7 +13,7 @@ have demonstrated:
 | **Pause / Resume** mid-rollout via `state: Stop` / `state: Run` | step 9 |
 | **Rollback** by pinning a previous `resourceSnapshotIndex` | step 12 |
 | Browse versioned `ClusterResourceSnapshot`s | step 11 |
-| `ClusterResourceOverride` — different config per stage, snapshot-and-roll-back | step 13 |
+| `ResourceOverride` — different config per stage, snapshot-and-roll-back | step 13 |
 | Namespace-scoped surface (`ResourcePlacement` + `StagedUpdateRun`) — second persona | step 14 |
 
 The setup uses **4 member clusters** so ordering and concurrency are visible.
@@ -427,7 +427,7 @@ kubectl --context kind-kf-member-04 -n kubefleet-sample \
 # 1
 ```
 
-## 13. Per-stage configuration via ClusterResourceOverride
+## 13. Per-stage configuration via ResourceOverride
 
 Staged updates and overrides are designed to work together: when an UpdateRun
 initializes, it captures **override snapshots** alongside the resource snapshot.
@@ -437,19 +437,33 @@ same stages and gates.
 We'll give each stage a different `CLUSTER_NAME` value. The sample backend
 already reads `CLUSTER_NAME` from its env, so no app changes are needed.
 
+> **Why `ResourceOverride`, not `ClusterResourceOverride`?**
+>
+> `ClusterResourceOverride` selectors only accept cluster-scoped resources or a
+> whole namespace (`selectionScope: NamespaceWithResources`). If you select the
+> namespace, the JSON patches are applied to **every** resource in it. With
+> `op: replace` on `/spec/template/spec/containers/0/env/0/value`, the patch
+> fails for the Namespace and the two Services (they don't have that path),
+> which blocks the rollout with
+> `OverriddenFailed: doc is missing path: …`.
+>
+> `ResourceOverride` is namespaced and lets us target **only the Deployment**,
+> so the patch path always exists.
+
 ```yaml
 apiVersion: placement.kubernetes-fleet.io/v1alpha1
-kind: ClusterResourceOverride
+kind: ResourceOverride
 metadata:
   name: backend-cluster-name
+  namespace: kubefleet-sample
 spec:
   placement:
     name: sample-crp
-  clusterResourceSelectors:
-    - group: ""
-      kind: Namespace
+  resourceSelectors:
+    - group: apps
+      kind: Deployment
       version: v1
-      name: kubefleet-sample
+      name: sample-backend
   policy:
     overrideRules:
       - clusterSelector:
@@ -482,7 +496,19 @@ spec:
 ```
 
 Trigger another UpdateRun (`sample-run-003`, `state: Run`) and walk it through
-gates. Then check each member:
+gates. If a stage gets stuck on **`StageUpdatingStarted`** without progress,
+inspect the binding for that cluster:
+
+```bash
+kubectl --context kind-kf-hub-01 get clusterresourcebinding \
+  -l kubernetes-fleet.io/parent-CRP=sample-crp,kubernetes-fleet.io/cluster-name=<member-name> \
+  -o jsonpath='{range .items[*].status.conditions[?(@.type=="Overridden")]}{.status} {.reason} {.message}{"\n"}{end}'
+```
+
+`Overridden=False` with reason `OverriddenFailed` means the JSON patch couldn't
+apply — fix the override path/scope before the rollout can proceed.
+
+Then check each member:
 
 ```bash
 for i in 01 02 03 04; do
@@ -619,7 +645,7 @@ HUB=kind-kf-hub-01
 kubectl --context $HUB delete csur --all
 kubectl --context $HUB delete clusterapprovalrequest --all
 kubectl --context $HUB delete clusterstagedupdatestrategy sample-advanced-strategy
-kubectl --context $HUB delete clusterresourceoverride backend-cluster-name --ignore-not-found
+kubectl --context $HUB -n kubefleet-sample delete resourceoverride backend-cluster-name --ignore-not-found
 kubectl --context $HUB delete crp sample-crp my-app-ns-only --ignore-not-found
 kubectl --context $HUB delete ns kubefleet-sample my-app-ns --ignore-not-found
 
@@ -641,7 +667,7 @@ By the end of this guide you have:
 6. Driven multiple rollouts and inspected the **immutable snapshots** that the
    system creates.
 7. Performed a **rollback** by pinning a previous `resourceSnapshotIndex`.
-8. Applied **`ClusterResourceOverride`** to ship different config per stage and
+8. Applied **`ResourceOverride`** to ship different config per stage and
    confirmed that override snapshots are captured per run and revert on
    rollback.
 9. Mirrored the flow with the **namespace-scoped** CRDs to exercise the
