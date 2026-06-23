@@ -142,7 +142,39 @@ Open `http://localhost:8090` → **KubeFleet Manager → Configure Plugin** and 
 In **Member Clusters** you should now see four entries with the labels you just
 applied.
 
-## 6. Deploy the sample app on the hub
+## 6. Build, load, and deploy the sample app on the hub
+
+The published `ghcr.io/weng271190436/kubefleet-sample-app/*:latest` images may
+not include the `/api/cluster-info` route the frontend uses to render the
+`Serving from:` chip — if you skip the local build, the chip is silently
+missing in step 10. To keep this guide self-contained for `kind`, build both
+images locally and load them into every member node.
+
+### 6a. Build images locally
+
+```bash
+cd ~/kubefleet-sample-app
+docker build -t kubefleet-sample-backend:dev ./backend
+docker build -t kubefleet-sample-frontend:dev ./frontend
+```
+
+### 6b. Load into each kind member cluster
+
+`kind`'s nodes have their own containerd cache. Load both images into all four
+members so the rollout in step 10 doesn't have to pull from a registry:
+
+```bash
+for cluster in kf-member-01 kf-member-02 kf-member-03 kf-member-04; do
+  kind load docker-image kubefleet-sample-backend:dev  --name $cluster
+  kind load docker-image kubefleet-sample-frontend:dev --name $cluster
+done
+```
+
+### 6c. Apply manifests and pin to the local image tags
+
+The manifests reference the `ghcr.io/...:latest` tags by default; override
+them with `kubectl set image` so the snapshot fleet captures points at the
+images you just loaded:
 
 ```bash
 HUB=kind-kf-hub-01
@@ -150,10 +182,16 @@ HUB=kind-kf-hub-01
 kubectl --context $HUB apply -f k8s/namespace.yaml
 kubectl --context $HUB -n kubefleet-sample apply -f k8s/backend.yaml
 kubectl --context $HUB -n kubefleet-sample apply -f k8s/frontend.yaml
+
+kubectl --context $HUB -n kubefleet-sample \
+  set image deploy/sample-backend  backend=kubefleet-sample-backend:dev
+kubectl --context $HUB -n kubefleet-sample \
+  set image deploy/sample-frontend frontend=kubefleet-sample-frontend:dev
 ```
 
-(If you have a custom image tag, run the `kubectl set image ...` commands from
-the basic quickstart now.)
+The deployment manifest already sets `imagePullPolicy: IfNotPresent`, so
+member nodes will reuse the locally-loaded image and never reach out to a
+registry.
 
 ## 7. Create the placement and the per-stage CLUSTER_NAME override
 
