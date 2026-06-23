@@ -245,7 +245,7 @@ We want every cluster to render its stage label in the app's
 
 ```bash
 kubectl --context kind-kf-hub-01 apply -f - <<'EOF'
-apiVersion: placement.kubernetes-fleet.io/v1alpha1
+apiVersion: placement.kubernetes-fleet.io/v1
 kind: ResourceOverride
 metadata:
   name: backend-cluster-name
@@ -685,7 +685,7 @@ the same PUT-on-create reason called out in step 7b):
 
 ```bash
 kubectl --context kind-kf-hub-01 apply -f - <<'EOF'
-apiVersion: placement.kubernetes-fleet.io/v1alpha1
+apiVersion: placement.kubernetes-fleet.io/v1
 kind: ResourceOverride
 metadata:
   name: backend-replicas
