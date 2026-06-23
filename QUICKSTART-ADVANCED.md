@@ -343,8 +343,29 @@ You should see one snapshot, e.g. `sample-crp-0-snapshot`, with label
 `kubernetes-fleet.io/resource-index=0`.
 
 In Headlamp → **Staged Resources** click into the snapshot to see exactly which
-resources were captured. Take note of the deployment image tag — this is the
-version we'll later **rollback** to.
+resources were captured. Look at the `sample-backend` Deployment under
+`spec.selectedResources` — you should see `replicas: 1` and
+`env: [{name: CLUSTER_NAME, value: unknown}]`. **This is the hub-side
+baseline** — every member starts from this; per-cluster differences come from
+overrides (step 13) or rolling forward to a later snapshot (step 12).
+
+### 11a. Inspect what's actually on each member (UI)
+
+The KubeFleet plugin reads from the **hub** — it shows placements, snapshots,
+runs and approvals. To see the **applied resources on a member cluster**, use
+Headlamp's built-in cluster switcher:
+
+1. Top-left cluster dropdown → switch to `kind-kf-member-01`.
+2. **Workloads → Deployments** → namespace `kubefleet-sample` → `sample-backend`.
+3. Open the **Pod template → Containers** section and confirm
+   `env: CLUSTER_NAME = unknown` and `replicas: 1`.
+4. Repeat for `kind-kf-member-02`, `kind-kf-member-03`, `kind-kf-member-04`.
+   Right now all four show the same values — there are no overrides yet, and
+   only one snapshot exists.
+
+Remember to switch the dropdown **back to `kind-kf-hub-01`** before continuing
+to step 12, otherwise the **KubeFleet Manager** pages will be empty (the
+fleet CRDs only live on the hub).
 
 ## 12. Roll out a new version, then roll back
 
@@ -426,6 +447,18 @@ kubectl --context kind-kf-member-04 -n kubefleet-sample \
   get deploy sample-backend -o jsonpath='{.spec.replicas}'; echo
 # 1
 ```
+
+### 12c. See the rollback diff in Headlamp
+
+To make the version flip visible in the UI:
+
+1. **Hub** (`kind-kf-hub-01`) → **KubeFleet Manager → Staged Resources** →
+   click `sample-crp-1-snapshot` → confirm `replicas: 2`. Then click
+   `sample-crp-0-snapshot` → confirm `replicas: 1`. Side-by-side these are the
+   two versions you rolled between.
+2. **Per-member** (e.g. `kind-kf-member-04`) → Workloads → Deployments →
+   `kubefleet-sample` / `sample-backend`. After the rollback finishes the live
+   spec shows `replicas: 1` again, matching snapshot 0.
 
 ## 13. Per-stage configuration via ResourceOverride
 
@@ -520,6 +553,32 @@ done
 ```
 
 You should see `STAGING`, `CANARY`, `CANARY`, `PROD` respectively.
+
+### 13a. See the differences side-by-side in Headlamp
+
+Now that overrides have shipped different config to each stage, the UI is the
+clearest way to confirm what each cluster actually ended up with:
+
+1. **Hub view** — switch the cluster dropdown to `kind-kf-hub-01`.
+   - **KubeFleet Manager → Staged Resources** → latest snapshot → confirm
+     `CLUSTER_NAME = unknown` on the hub baseline (overrides are *not* part of
+     the resource snapshot — they're stored as separate override snapshots).
+   - **KubeFleet Manager → Resource Overrides** → `backend-cluster-name` →
+     details page shows the three per-environment JSON patches.
+   - **KubeFleet Manager → Staged Rollout Runs → `sample-run-003`** →
+     Stage Status table; each cluster row lists its
+     `clusterResourceOverrideSnapshots` (e.g. `backend-cluster-name-0`),
+     proving the override was bound to the run.
+2. **Per-member view** — switch the cluster dropdown in turn to:
+   - `kind-kf-member-01` → Workloads → Deployments → `kubefleet-sample` →
+     `sample-backend` → env `CLUSTER_NAME = STAGING`
+   - `kind-kf-member-02` → same path → `CANARY`
+   - `kind-kf-member-03` → same path → `CANARY`
+   - `kind-kf-member-04` → same path → `PROD`
+
+This is the demo punchline: **the hub object is identical, but each member
+received a stage-specific value**. Open two browser tabs side by side (one on
+`member-01`, one on `member-04`) to make the diff obvious during a walk-through.
 
 Proof that overrides are versioned with the run: if you now create another
 rollback run pinning `resourceSnapshotIndex: "0"`, the overrides revert along
