@@ -575,6 +575,15 @@ and rejects multi-document YAML with
 If you prefer the UI, create the `ResourcePlacement`, `StagedUpdateStrategy`
 and `StagedUpdateRun` as three separate creates.
 
+> **Apply the Placement and Strategy first, then the Run.** Creating all three
+> in a single `kubectl apply` can race the controller's informer cache: if the
+> run is reconciled before the strategy is visible, it terminates with
+> `Initialized=False` (`UpdateRunInitializedFailed: referenced updateStrategy
+> not found`) and **will not retry**. Recovery is to `delete sur <name>` and
+> recreate it.
+
+Step 14a — placement + strategy:
+
 ```bash
 kubectl --context kind-kf-hub-01 apply -f - <<'EOF'
 ---
@@ -622,7 +631,13 @@ spec:
       maxConcurrency: 50%        # 2 of 3 clusters → rounds to 1
       beforeStageTasks:
         - type: Approval
----
+EOF
+```
+
+Step 14b — once the strategy exists, create the run:
+
+```bash
+kubectl --context kind-kf-hub-01 apply -f - <<'EOF'
 apiVersion: placement.kubernetes-fleet.io/v1
 kind: StagedUpdateRun
 metadata:
