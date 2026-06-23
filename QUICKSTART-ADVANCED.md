@@ -576,25 +576,51 @@ kubectl --context kind-kf-hub-01 get clusterresourcebinding \
 `Overridden=False` with reason `OverriddenFailed` means the JSON patch couldn't
 apply — fix the override path/scope before the rollout can proceed.
 
-Then check each member:
+### 13a. Live walkthrough — flip each chip as its stage lands
+
+The most compelling demo is to keep the four browser tabs from step 11a open
+and reload each one *as its stage finishes*. Before starting, every tab should
+read `Serving from: unknown`.
+
+Open a watch window on the run in one terminal:
 
 ```bash
-for i in 01 02 03 04; do
-  echo "kind-kf-member-$i:"
-  kubectl --context kind-kf-member-$i -n kubefleet-sample \
-    get deploy sample-backend -o jsonpath='{.spec.template.spec.containers[0].env[0].value}'
-  echo
-done
+watch kubectl --context kind-kf-hub-01 get csur sample-run-003
 ```
 
-You should see `STAGING`, `CANARY`, `CANARY`, `PROD` respectively.
+And keep the four port-forward terminals running so the tabs can be reloaded
+on demand. Also keep Headlamp open on the hub at
+**KubeFleet Manager → Staged Rollout Runs → `sample-run-003`** — the
+**Stage Status** table updates live and shows which cluster is "updating"
+right now.
 
-### 13a. See the differences side-by-side in Headlamp and the app
+Now drive the rollout:
 
-Now that overrides have shipped different config to each stage, the UI is the
-clearest way to confirm what each cluster actually ended up with. **Two views**:
+1. **Apply the override + create the run** (from above). Watch the run move
+   from `Initialized=True` to `Progressing=True`. The staging stage begins
+   immediately.
+2. **Staging completes** (~30s rollout + 30s `TimedWait`).
+   → Reload `http://localhost:8081`. Chip: **`STAGING`**.
+   The other three tabs still show `unknown`.
+3. **Approve `sample-run-003-before-canary`** in
+   **Pending Approvals** (or via the kubectl patch from step 10b).
+   The canary stage starts. Because `sortingLabelKey: order` and
+   `maxConcurrency: 1`, member-03 (`order=1`) updates first, then member-02.
+4. **member-03 succeeds** (the Stage Status table shows it as completed
+   while member-02 is still pending).
+   → Reload `http://localhost:8083`. Chip: **`CANARY`**.
+   Tab :8082 still shows `unknown` for a few more seconds — proof that the
+   stage is serialised, not parallel.
+5. **member-02 succeeds**.
+   → Reload `http://localhost:8082`. Chip: **`CANARY`**.
+6. Canary after-stage tasks run — the **1 m `TimedWait`** elapses, then the
+   `Approval` task creates `sample-run-003-after-canary`. **Approve it.**
+7. **Approve `sample-run-003-before-prod`** when it appears. The prod stage
+   updates member-04.
+8. **member-04 succeeds.**
+   → Reload `http://localhost:8084`. Chip: **`PROD`**.
 
-**(a) Running app (your four browser tabs from step 11a)** — reload each tab:
+End state — reload all four tabs once more:
 
 | Tab | URL | Expected `Serving from:` chip |
 | --- | --- | --- |
@@ -603,17 +629,29 @@ clearest way to confirm what each cluster actually ended up with. **Two views**:
 | member-03 | `http://localhost:8083` | `CANARY` |
 | member-04 | `http://localhost:8084` | `PROD` |
 
-This is the demo punchline — the hub object is identical, but each member
-renders a stage-specific value. If a chip still says `unknown`, give the
-pod a moment to be replaced by the override-rolled pod (`kubectl get pods -A`
-on that context).
+If a chip still says `unknown` after the matching stage shows `Succeeded`,
+the old pod is still terminating — wait a few seconds for the override-rolled
+pod to come up, then refresh.
 
-**(b) Hub-side metadata in the KubeFleet Manager plugin** (switch the
-Headlamp cluster dropdown to `kind-kf-hub-01`):
+You can also confirm everything via kubectl:
 
-- **Staged Resources** → latest snapshot → confirm `CLUSTER_NAME = unknown`
-  on the baseline. Overrides are *not* part of the resource snapshot — they
-  live as separate override snapshots.
+```bash
+for i in 01 02 03 04; do
+  echo -n "kind-kf-member-$i: "
+  kubectl --context kind-kf-member-$i -n kubefleet-sample \
+    get deploy sample-backend -o jsonpath='{.spec.template.spec.containers[0].env[0].value}'
+  echo
+done
+```
+
+### 13b. Hub-side metadata in the KubeFleet Manager plugin
+
+Once the run finishes, switch Headlamp's cluster dropdown to `kind-kf-hub-01`
+and confirm the override machinery from the hub side:
+
+- **Staged Resources** → latest snapshot → `CLUSTER_NAME = unknown` on the
+  baseline. Overrides are *not* part of the resource snapshot — they live as
+  separate override snapshots.
 - **Resource Overrides** → `backend-cluster-name` → the details page lists
   the three per-environment JSON patches.
 - **Staged Rollout Runs → `sample-run-003`** → Stage Status table; each
@@ -622,7 +660,7 @@ Headlamp cluster dropdown to `kind-kf-hub-01`):
 
 Proof that overrides are versioned with the run: if you now create another
 rollback run pinning `resourceSnapshotIndex: "0"`, the overrides revert along
-with the resources — reload the tabs again and every chip flips back to
+with the resources — reload the four tabs again and every chip flips back to
 `unknown`.
 
 ## 14. Namespace-scoped staged update (second persona)
