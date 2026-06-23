@@ -270,13 +270,54 @@ kubectl --context kind-kf-hub-01 patch csur sample-run-001 \
 Or, from Headlamp's **Staged Rollout Runs** details page, use the action menu →
 **Resume**.
 
-## 10. Drive the rollout through all three stages
+## 10. Drive the rollout through all three stages — with live visual proof
 
-The **staging** stage runs immediately and completes in ~30s + 30s soak.
+Before patching the run to `Run`, line up the tools you'll use to watch each
+stage land on a member cluster:
 
-### 10a. Pause and resume mid-rollout (optional)
+- **Terminal A** — `watch kubectl --context kind-kf-hub-01 get csur sample-run-001`
+  to see stage/cluster progress.
+- **Headlamp tab** — **KubeFleet Manager → Staged Rollout Runs →
+  `sample-run-001`** → **Stage Status** table updates live.
+- **Four spare terminals** for port-forwards (we'll start them one at a time as
+  each member receives the workload).
+- **Browser** ready to open `http://localhost:8081` … `8084` as the
+  port-forwards come up.
 
-While the canary stage is updating, demonstrate pause/resume:
+Right now none of the members has the `kubefleet-sample` namespace —
+port-forwards will fail. That's part of the demo: each stage of the run
+**creates** the workload on its target cluster.
+
+Flip the run from `Initialize` into `Run`:
+
+```bash
+kubectl --context kind-kf-hub-01 patch csur sample-run-001 \
+  --type='merge' -p '{"spec":{"state":"Run"}}'
+```
+
+Or, from Headlamp's **Staged Rollout Runs** details page, use the action menu →
+**Resume**.
+
+### 10a. Staging stage lands on member-01
+
+The staging stage starts immediately. The Stage Status row for `staging` flips
+from `Started` → `Succeeded`, then the after-stage `TimedWait: 30s` begins.
+Total: ~30 s rollout + 30 s soak.
+
+When the staging row reads `Succeeded`, in a new terminal:
+
+```bash
+kubectl --context kind-kf-member-01 port-forward -n kubefleet-sample \
+  svc/sample-frontend 8081:80 --address 0.0.0.0
+```
+
+Open `http://localhost:8081`. The page loads with chip
+**`Serving from: unknown`** — that's the hub-side baseline. The other three
+members still don't have the namespace.
+
+### 10b. Pause and resume mid-rollout (optional)
+
+While the canary stage is updating (next sub-step), demonstrate pause/resume:
 
 ```bash
 kubectl --context kind-kf-hub-01 patch csur sample-run-001 \
@@ -289,11 +330,10 @@ kubectl --context kind-kf-hub-01 patch csur sample-run-001 \
   --type='merge' -p '{"spec":{"state":"Run"}}'
 ```
 
-### 10b. Approve the canary before-stage gate
+### 10c. Approve before-canary, watch ordered rollout land
 
-Once staging finishes, the canary stage waits on its `Approval` before-task.
-
-In Headlamp → **Pending Approvals**, approve `sample-run-001-before-canary`.
+The canary stage waits on its `Approval` before-task. In Headlamp →
+**Pending Approvals**, approve `sample-run-001-before-canary`.
 
 Equivalent kubectl:
 
@@ -304,32 +344,60 @@ kubectl --context kind-kf-hub-01 patch clusterapprovalrequest \
   -p "{\"status\":{\"conditions\":[{\"type\":\"Approved\",\"status\":\"True\",\"reason\":\"approved\",\"message\":\"approved\",\"lastTransitionTime\":\"$NOW\",\"observedGeneration\":1}]}}"
 ```
 
-Watch the canary stage:
+Because of `sortingLabelKey: order` and `maxConcurrency: 1`,
+**member-03 (`order=1`) updates first**, then member-02. Watch the Stage
+Status table — only member-03 should be `Updating` at first; member-02 stays
+pending.
+
+When member-03 turns `Succeeded`, in a new terminal:
 
 ```bash
-watch kubectl --context kind-kf-hub-01 get csur sample-run-001
+kubectl --context kind-kf-member-03 port-forward -n kubefleet-sample \
+  svc/sample-frontend 8083:80 --address 0.0.0.0
 ```
 
-You should see `member-03` flip to Succeeded before `member-02` starts
-(because `sortingLabelKey: order` orders by integer value and member-03 has
-`order=1`). Both run sequentially because `maxConcurrency: 1`.
+Open `http://localhost:8083` — chip **`Serving from: unknown`**.
+Tab `:8082` still refuses connections — proof that the stage is serialised,
+not parallel.
 
-### 10c. Approve the canary after-stage gate (after the 1m soak)
+When member-02 turns `Succeeded`, in another terminal:
+
+```bash
+kubectl --context kind-kf-member-02 port-forward -n kubefleet-sample \
+  svc/sample-frontend 8082:80 --address 0.0.0.0
+```
+
+Open `http://localhost:8082` — chip **`Serving from: unknown`**. Three members
+are now serving.
+
+### 10d. Approve after-canary (after the 1 min soak)
 
 The canary after-stage has **two** tasks — `TimedWait: 1m` and `Approval`.
 Both must complete. After the wait elapses, approve
-`sample-run-001-after-canary` the same way.
+`sample-run-001-after-canary` the same way as before.
 
-### 10d. Approve the prod before-stage gate
+### 10e. Approve before-prod, prod stage lands on member-04
 
-After canary completes, approve `sample-run-001-before-prod`. The prod stage
-runs and the UpdateRun reaches `Succeeded`.
+Approve `sample-run-001-before-prod` when it appears. The prod stage updates
+member-04. When member-04 turns `Succeeded`, in the last terminal:
+
+```bash
+kubectl --context kind-kf-member-04 port-forward -n kubefleet-sample \
+  svc/sample-frontend 8084:80 --address 0.0.0.0
+```
+
+Open `http://localhost:8084` — chip **`Serving from: unknown`**. All four tabs
+now show the app — every member received the workload in the strict order
+defined by the strategy.
 
 ```bash
 kubectl --context kind-kf-hub-01 get csur sample-run-001
 # NAME            ... INITIALIZED  PROGRESSING  SUCCEEDED
 # sample-run-001  ... True         False        True
 ```
+
+The chip values are all `unknown` because there are no overrides yet — step 13
+will make them flip per stage. Keep all four port-forward terminals running.
 
 ## 11. Inspect the auto-created resource snapshot
 
@@ -349,37 +417,7 @@ resources were captured. Look at the `sample-backend` Deployment under
 baseline** — every member starts from this; per-cluster differences come from
 overrides (step 13) or rolling forward to a later snapshot (step 12).
 
-### 11a. Open one browser tab per member cluster
-
-There are two views worth keeping open as you go:
-
-**A. The Headlamp UI** — already running at `http://localhost:8090` from
-step 5. Use the top-left cluster dropdown to switch between the hub and each
-member. This is where you'll inspect placements, snapshots, runs, approvals
-and Deployment specs.
-
-**B. The sample app on each member** — the frontend shows a
-`Serving from: <CLUSTER_NAME>` chip, which is the simplest way to see the
-per-stage override take effect later in step 13. Port-forward the frontend
-from each member to a different local port (run each line in its own
-terminal):
-
-```bash
-kubectl --context kind-kf-member-01 port-forward -n kubefleet-sample \
-  svc/sample-frontend 8081:80 --address 0.0.0.0
-kubectl --context kind-kf-member-02 port-forward -n kubefleet-sample \
-  svc/sample-frontend 8082:80 --address 0.0.0.0
-kubectl --context kind-kf-member-03 port-forward -n kubefleet-sample \
-  svc/sample-frontend 8083:80 --address 0.0.0.0
-kubectl --context kind-kf-member-04 port-forward -n kubefleet-sample \
-  svc/sample-frontend 8084:80 --address 0.0.0.0
-```
-
-Then open `http://localhost:8081` … `8084` in four browser tabs. Right now
-all four show `Serving from: unknown` — the hub-side baseline. We'll come
-back to these tabs after the override in step 13.
-
-### 11b. Inspect what's actually on each member (Headlamp)
+### 11a. Inspect what's actually on each member (Headlamp)
 
 If you'd rather check the manifests than the running app, the KubeFleet
 plugin reads from the **hub** — it shows placements, snapshots, runs and
