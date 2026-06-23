@@ -238,7 +238,13 @@ We want every cluster to render its stage label in the app's
 > `ResourceOverride` is namespaced and lets us target **only the Deployment**,
 > so the patch path always exists.
 
-```yaml
+> **Apply via `kubectl`, not Headlamp's + CREATE form.** Headlamp's form
+> issues a PUT, which fails on a brand-new namespaced CRD with
+> `metadata.resourceVersion: Invalid value: 0: must be specified for an update`.
+> Pipe the YAML below into `kubectl apply -f -` instead.
+
+```bash
+kubectl --context kind-kf-hub-01 apply -f - <<'EOF'
 apiVersion: placement.kubernetes-fleet.io/v1alpha1
 kind: ResourceOverride
 metadata:
@@ -281,6 +287,7 @@ spec:
           - op: replace
             path: /spec/template/spec/containers/0/env/0/value
             value: "PROD"
+EOF
 ```
 
 The override is now in place but **nothing happens yet** — overrides are only
@@ -673,9 +680,11 @@ This demonstrates two things:
 2. **The first override survives** — chips stay `STAGING / CANARY / CANARY /
    PROD`, proving the new override didn't replace the old one.
 
-Apply the second override:
+Apply the second override (use `kubectl`, not Headlamp's + CREATE form, for
+the same PUT-on-create reason called out in step 7b):
 
-```yaml
+```bash
+kubectl --context kind-kf-hub-01 apply -f - <<'EOF'
 apiVersion: placement.kubernetes-fleet.io/v1alpha1
 kind: ResourceOverride
 metadata:
@@ -718,6 +727,7 @@ spec:
           - op: replace
             path: /spec/replicas
             value: 4
+EOF
 ```
 
 Then create the run:
