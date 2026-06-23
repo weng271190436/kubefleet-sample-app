@@ -349,10 +349,41 @@ resources were captured. Look at the `sample-backend` Deployment under
 baseline** — every member starts from this; per-cluster differences come from
 overrides (step 13) or rolling forward to a later snapshot (step 12).
 
-### 11a. Inspect what's actually on each member (UI)
+### 11a. Open one browser tab per member cluster
 
-The KubeFleet plugin reads from the **hub** — it shows placements, snapshots,
-runs and approvals. To see the **applied resources on a member cluster**, use
+There are two views worth keeping open as you go:
+
+**A. The Headlamp UI** — already running at `http://localhost:8090` from
+step 5. Use the top-left cluster dropdown to switch between the hub and each
+member. This is where you'll inspect placements, snapshots, runs, approvals
+and Deployment specs.
+
+**B. The sample app on each member** — the frontend shows a
+`Serving from: <CLUSTER_NAME>` chip, which is the simplest way to see the
+per-stage override take effect later in step 13. Port-forward the frontend
+from each member to a different local port (run each line in its own
+terminal):
+
+```bash
+kubectl --context kind-kf-member-01 port-forward -n kubefleet-sample \
+  svc/sample-frontend 8081:80 --address 0.0.0.0
+kubectl --context kind-kf-member-02 port-forward -n kubefleet-sample \
+  svc/sample-frontend 8082:80 --address 0.0.0.0
+kubectl --context kind-kf-member-03 port-forward -n kubefleet-sample \
+  svc/sample-frontend 8083:80 --address 0.0.0.0
+kubectl --context kind-kf-member-04 port-forward -n kubefleet-sample \
+  svc/sample-frontend 8084:80 --address 0.0.0.0
+```
+
+Then open `http://localhost:8081` … `8084` in four browser tabs. Right now
+all four show `Serving from: unknown` — the hub-side baseline. We'll come
+back to these tabs after the override in step 13.
+
+### 11b. Inspect what's actually on each member (Headlamp)
+
+If you'd rather check the manifests than the running app, the KubeFleet
+plugin reads from the **hub** — it shows placements, snapshots, runs and
+approvals. To see the **applied Deployment on a member cluster**, use
 Headlamp's built-in cluster switcher:
 
 1. Top-left cluster dropdown → switch to `kind-kf-member-01`.
@@ -363,9 +394,9 @@ Headlamp's built-in cluster switcher:
    Right now all four show the same values — there are no overrides yet, and
    only one snapshot exists.
 
-Remember to switch the dropdown **back to `kind-kf-hub-01`** before continuing
-to step 12, otherwise the **KubeFleet Manager** pages will be empty (the
-fleet CRDs only live on the hub).
+Remember to switch the dropdown **back to `kind-kf-hub-01`** before using the
+**KubeFleet Manager** pages, otherwise they will be empty (the fleet CRDs
+only live on the hub).
 
 ## 12. Roll out a new version, then roll back
 
@@ -459,6 +490,10 @@ To make the version flip visible in the UI:
 2. **Per-member** (e.g. `kind-kf-member-04`) → Workloads → Deployments →
    `kubefleet-sample` / `sample-backend`. After the rollback finishes the live
    spec shows `replicas: 1` again, matching snapshot 0.
+3. **Running app** (the tabs from step 11a) → reload each of
+   `http://localhost:8081-8084`. While the run is on snapshot 1 you should see
+   two backend pods responding (round-robin) on the loaded clusters; after the
+   rollback the pod count drops back to 1 per cluster.
 
 ## 13. Per-stage configuration via ResourceOverride
 
@@ -554,35 +589,41 @@ done
 
 You should see `STAGING`, `CANARY`, `CANARY`, `PROD` respectively.
 
-### 13a. See the differences side-by-side in Headlamp
+### 13a. See the differences side-by-side in Headlamp and the app
 
 Now that overrides have shipped different config to each stage, the UI is the
-clearest way to confirm what each cluster actually ended up with:
+clearest way to confirm what each cluster actually ended up with. **Two views**:
 
-1. **Hub view** — switch the cluster dropdown to `kind-kf-hub-01`.
-   - **KubeFleet Manager → Staged Resources** → latest snapshot → confirm
-     `CLUSTER_NAME = unknown` on the hub baseline (overrides are *not* part of
-     the resource snapshot — they're stored as separate override snapshots).
-   - **KubeFleet Manager → Resource Overrides** → `backend-cluster-name` →
-     details page shows the three per-environment JSON patches.
-   - **KubeFleet Manager → Staged Rollout Runs → `sample-run-003`** →
-     Stage Status table; each cluster row lists its
-     `clusterResourceOverrideSnapshots` (e.g. `backend-cluster-name-0`),
-     proving the override was bound to the run.
-2. **Per-member view** — switch the cluster dropdown in turn to:
-   - `kind-kf-member-01` → Workloads → Deployments → `kubefleet-sample` →
-     `sample-backend` → env `CLUSTER_NAME = STAGING`
-   - `kind-kf-member-02` → same path → `CANARY`
-   - `kind-kf-member-03` → same path → `CANARY`
-   - `kind-kf-member-04` → same path → `PROD`
+**(a) Running app (your four browser tabs from step 11a)** — reload each tab:
 
-This is the demo punchline: **the hub object is identical, but each member
-received a stage-specific value**. Open two browser tabs side by side (one on
-`member-01`, one on `member-04`) to make the diff obvious during a walk-through.
+| Tab | URL | Expected `Serving from:` chip |
+| --- | --- | --- |
+| member-01 | `http://localhost:8081` | `STAGING` |
+| member-02 | `http://localhost:8082` | `CANARY` |
+| member-03 | `http://localhost:8083` | `CANARY` |
+| member-04 | `http://localhost:8084` | `PROD` |
+
+This is the demo punchline — the hub object is identical, but each member
+renders a stage-specific value. If a chip still says `unknown`, give the
+pod a moment to be replaced by the override-rolled pod (`kubectl get pods -A`
+on that context).
+
+**(b) Hub-side metadata in the KubeFleet Manager plugin** (switch the
+Headlamp cluster dropdown to `kind-kf-hub-01`):
+
+- **Staged Resources** → latest snapshot → confirm `CLUSTER_NAME = unknown`
+  on the baseline. Overrides are *not* part of the resource snapshot — they
+  live as separate override snapshots.
+- **Resource Overrides** → `backend-cluster-name` → the details page lists
+  the three per-environment JSON patches.
+- **Staged Rollout Runs → `sample-run-003`** → Stage Status table; each
+  cluster row lists its `clusterResourceOverrideSnapshots` (e.g.
+  `backend-cluster-name-0`), proving the override was bound to the run.
 
 Proof that overrides are versioned with the run: if you now create another
 rollback run pinning `resourceSnapshotIndex: "0"`, the overrides revert along
-with the resources.
+with the resources — reload the tabs again and every chip flips back to
+`unknown`.
 
 ## 14. Namespace-scoped staged update (second persona)
 
