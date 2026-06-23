@@ -350,14 +350,17 @@ version we'll later **rollback** to.
 
 ### 12a. Make a hub-side change that creates a new snapshot
 
-Anything that modifies the selected resources triggers a new snapshot when the
-next UpdateRun initializes. The simplest demo — flip a label/annotation on a
-deployment:
+A new snapshot is only created when the **hash of the selected resources
+changes**. Fleet normalizes certain metadata (e.g. it strips
+`metadata.annotations` from Deployments) before hashing, so cosmetic metadata
+patches typically **won't** produce a new snapshot — UpdateRuns will quietly
+reuse `sample-crp-0-snapshot`.
+
+Use a real spec change. Scaling the backend is the simplest:
 
 ```bash
 kubectl --context kind-kf-hub-01 -n kubefleet-sample \
-  patch deployment sample-backend \
-  -p '{"metadata":{"annotations":{"sample.config/version":"v2"}}}'
+  scale deployment sample-backend --replicas=2
 ```
 
 Create the second UpdateRun, this time starting immediately:
@@ -372,6 +375,20 @@ spec:
   stagedRolloutStrategyName: sample-advanced-strategy
   state: Run
 ```
+
+After init, confirm the new snapshot was created and the run picked it up:
+
+```bash
+kubectl --context kind-kf-hub-01 get csur sample-run-002 \
+  -o jsonpath='{.status.resourceSnapshotIndexUsed}'; echo
+# 1
+```
+
+> **If `resourceSnapshotIndexUsed` is still `0`**, fleet didn't see your hub
+> change. Verify with
+> `kubectl --context kind-kf-hub-01 -n kubefleet-sample get deploy sample-backend -o jsonpath='{.spec.replicas}'; echo`
+> and pick a change to a field that's definitely captured (replicas, env value,
+> image, resource requests).
 
 Walk it through the same approvals as before. Once finished, you should see two
 snapshots:
@@ -401,12 +418,13 @@ spec:
 ```
 
 Approve each gate as before. When it completes, all 4 member clusters are back
-on the resources captured in `sample-crp-0-snapshot`. Verify on any member:
+on the resources captured in `sample-crp-0-snapshot`. Verify on any member —
+the backend should be back to **1 replica**:
 
 ```bash
 kubectl --context kind-kf-member-04 -n kubefleet-sample \
-  get deploy sample-backend -o jsonpath='{.metadata.annotations.sample\.config/version}'
-# (empty — we rolled back before the v2 annotation was added)
+  get deploy sample-backend -o jsonpath='{.spec.replicas}'; echo
+# 1
 ```
 
 ## 13. Per-stage configuration via ClusterResourceOverride
