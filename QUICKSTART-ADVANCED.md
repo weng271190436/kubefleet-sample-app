@@ -14,15 +14,15 @@ have demonstrated:
 | **Rollback** by pinning a previous `resourceSnapshotIndex` | step 12 |
 | Browse versioned `ClusterResourceSnapshot`s | step 11 |
 | `ResourceOverride` — per-stage `CLUSTER_NAME` from the first rollout | step 7b |
-| Layering a **second** `ResourceOverride` for per-stage replica counts | step 13 |
+| Adding per-stage **replica counts** to the existing `ResourceOverride` | step 13 |
 | Namespace-scoped surface (`ResourcePlacement` + `StagedUpdateRun`) — second persona | step 14 |
 
 The setup uses **4 member clusters** so ordering and concurrency are visible.
 
-Steps 1–12 are one continuous demo on a single placement. Step 13 layers a
-*second* override on top of the existing one to demonstrate override stacking
-(per-stage replica counts). Step 14 is a parallel walkthrough that repeats the
-flow with the namespace-scoped CRDs.
+Steps 1–12 are one continuous demo on a single placement. Step 13 adds
+per-stage replica counts to the existing override to demonstrate multiple
+JSON patches in a single `ResourceOverride`. Step 14 is a parallel walkthrough
+that repeats the flow with the namespace-scoped CRDs.
 
 ## Prerequisites
 
@@ -661,11 +661,11 @@ To make the version flip visible in the UI:
    two backend pods responding (round-robin) on the loaded clusters; after the
    rollback the pod count drops back to 1 per cluster.
 
-## 13. Layer a second override — per-stage replica counts
+## 13. Add per-stage replica counts to the override
 
 Step 7b's `backend-cluster-name` override stamps the stage label into
-`CLUSTER_NAME`. Now we layer a **second** `ResourceOverride` on top of the
-same Deployment to scale the backend differently in each stage:
+`CLUSTER_NAME`. Now we **add replica-count patches** to the same
+`ResourceOverride` to scale the backend differently in each stage:
 
 | Stage | Replicas |
 | --- | --- |
@@ -673,22 +673,24 @@ same Deployment to scale the backend differently in each stage:
 | canary | 3 |
 | prod | 4 |
 
-This demonstrates two things:
+> **Why not a separate `ResourceOverride`?**
+>
+> KubeFleet 0.3.1 does not allow two `ResourceOverride` objects to select the
+> same resource. The admission webhook rejects the second override with
+> `the resource has been selected by both <name1> and <name2>, which is not
+> supported`. Instead, add additional `jsonPatchOverrides` entries to the
+> existing override — a single `ResourceOverride` can carry multiple patches
+> per stage.
 
-1. **Multiple overrides stack** on the same selected resource — fleet captures
-   both override snapshots at run init and applies both during rollout.
-2. **The first override survives** — chips stay `STAGING / CANARY / CANARY /
-   PROD`, proving the new override didn't replace the old one.
-
-Apply the second override (use `kubectl`, not Headlamp's + CREATE form, for
-the same PUT-on-create reason called out in step 7b):
+Update the existing override to include replica patches alongside the
+`CLUSTER_NAME` patches:
 
 ```bash
 kubectl --context kind-kf-hub-01 apply -f - <<'EOF'
 apiVersion: placement.kubernetes-fleet.io/v1
 kind: ResourceOverride
 metadata:
-  name: backend-replicas
+  name: backend-cluster-name
   namespace: kubefleet-sample
 spec:
   placement:
@@ -707,6 +709,9 @@ spec:
                   environment: staging
         jsonPatchOverrides:
           - op: replace
+            path: /spec/template/spec/containers/0/env/0/value
+            value: "STAGING"
+          - op: replace
             path: /spec/replicas
             value: 2
       - clusterSelector:
@@ -716,6 +721,9 @@ spec:
                   environment: canary
         jsonPatchOverrides:
           - op: replace
+            path: /spec/template/spec/containers/0/env/0/value
+            value: "CANARY"
+          - op: replace
             path: /spec/replicas
             value: 3
       - clusterSelector:
@@ -724,6 +732,9 @@ spec:
                 matchLabels:
                   environment: prod
         jsonPatchOverrides:
+          - op: replace
+            path: /spec/template/spec/containers/0/env/0/value
+            value: "PROD"
           - op: replace
             path: /spec/replicas
             value: 4
@@ -801,7 +812,7 @@ done
 ```
 
 Reload the four browser tabs once more — chips are unchanged
-(`STAGING / CANARY / CANARY / PROD`). **Two overrides stacked, no conflict.**
+(`STAGING / CANARY / CANARY / PROD`). **Both patch types coexist in one override.**
 
 ### 13b. Hub-side metadata in the KubeFleet Manager plugin
 
@@ -810,13 +821,14 @@ Switch Headlamp's cluster dropdown to `kind-kf-hub-01`:
 - **Staged Resources → latest snapshot** → `CLUSTER_NAME = unknown` and
   `replicas: 1`. Overrides are *not* part of the resource snapshot — they live
   as separate override snapshots.
-- **Resource Overrides** → you should see **both** `backend-cluster-name` and
-  `backend-replicas` in the `kubefleet-sample` namespace; each details page
-  shows its three per-environment JSON patches.
+- **Resource Overrides** → you should see `backend-cluster-name` in the
+  `kubefleet-sample` namespace; the details page shows its three
+  per-environment JSON patches, each now carrying both the `CLUSTER_NAME` and
+  `replicas` patches.
 - **Staged Rollout Runs → `sample-run-003`** → Stage Status table; each
-  cluster row's `clusterResourceOverrideSnapshots` lists **both** override
-  snapshots, e.g. `backend-cluster-name-0` *and* `backend-replicas-0`. This
-  is fleet's audit trail of "which overrides shipped to which cluster".
+  cluster row's `clusterResourceOverrideSnapshots` lists the override
+  snapshot, e.g. `backend-cluster-name-0`. This is fleet's audit trail of
+  "which overrides shipped to which cluster".
 
 Also list the override snapshots from kubectl:
 
@@ -825,13 +837,12 @@ kubectl --context kind-kf-hub-01 get resourceoverridesnapshots \
   -n kubefleet-sample
 # NAME                       AGE
 # backend-cluster-name-0     …
-# backend-replicas-0         …
 ```
 
-> **Try it:** delete `backend-replicas`, then trigger a new UpdateRun. After
-> the rollout, every cluster goes back to 1 replica — but chips still read
-> `STAGING / CANARY / CANARY / PROD` because the first override is untouched.
-> This is what makes per-aspect, per-stage overrides composable.
+> **Try it:** remove the `replicas` patches from `backend-cluster-name`, then
+> trigger a new UpdateRun. After the rollout, every cluster goes back to 1
+> replica — but chips still read `STAGING / CANARY / CANARY / PROD` because
+> the `CLUSTER_NAME` patches are untouched.
 
 ## 14. Namespace-scoped staged update (second persona)
 
@@ -976,7 +987,7 @@ HUB=kind-kf-hub-01
 kubectl --context $HUB delete csur --all
 kubectl --context $HUB delete clusterapprovalrequest --all
 kubectl --context $HUB delete clusterstagedupdatestrategy sample-advanced-strategy
-kubectl --context $HUB -n kubefleet-sample delete resourceoverride backend-cluster-name backend-replicas --ignore-not-found
+kubectl --context $HUB -n kubefleet-sample delete resourceoverride backend-cluster-name --ignore-not-found
 kubectl --context $HUB delete crp sample-crp my-app-ns-only --ignore-not-found
 kubectl --context $HUB delete ns kubefleet-sample my-app-ns --ignore-not-found
 
@@ -998,10 +1009,9 @@ By the end of this guide you have:
 6. Driven multiple rollouts and inspected the **immutable snapshots** that the
    system creates.
 7. Performed a **rollback** by pinning a previous `resourceSnapshotIndex`.
-8. Applied **two stacked `ResourceOverride`s** — the first stamps a per-stage
-   `CLUSTER_NAME` (step 7b, visible in every rollout from step 10 onward),
-   the second sets per-stage replica counts (step 13). Confirmed both
-   coexist and both are captured in `clusterResourceOverrideSnapshots` on
-   each binding.
+8. Extended the `ResourceOverride` with **per-stage replica counts** (step 13)
+   alongside the existing `CLUSTER_NAME` patches (step 7b). Confirmed both
+   patch types coexist in a single override and are captured in
+   `clusterResourceOverrideSnapshots` on each binding.
 9. Mirrored the flow with the **namespace-scoped** CRDs to exercise the
    second persona (app team, no cluster-admin).
