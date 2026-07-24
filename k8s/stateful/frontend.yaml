@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-frontend
+  namespace: kubefleet-pg
+  labels:
+    app: sample-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sample-frontend
+  template:
+    metadata:
+      labels:
+        app: sample-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: kubefleet-sample-frontend:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-frontend
+  namespace: kubefleet-pg
+spec:
+  selector:
+    app: sample-frontend
+  ports:
+    - port: 80
+      targetPort: 80

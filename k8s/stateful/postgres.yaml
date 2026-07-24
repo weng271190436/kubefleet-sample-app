@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: kubefleet-pg
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: kubefleet-sample-postgres:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+              hostPort: 5432
+              name: pg
+          env:
+            - name: POSTGRES_ROLE
+              value: "primary"          # overridden by KubeFleet ResourceOverride
+            - name: POSTGRES_PASSWORD
+              value: "postgres"
+            - name: REPLICATION_USER
+              value: "replicator"
+            - name: REPLICATION_PASSWORD
+              value: "replpass"
+            - name: PRIMARY_HOST
+              value: "none"             # overridden on replicas
+            - name: PRIMARY_PORT
+              value: "5432"
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: kubefleet-pg
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None    # headless for StatefulSet
+
