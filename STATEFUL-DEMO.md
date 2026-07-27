@@ -330,9 +330,88 @@ Point `PRIMARY_HOST` to the new primary (us-east) and swap cluster display names
 US_EAST_IP=$(docker inspect pg-us-east-control-plane \
   --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
 
-# Update pg-role-config: PRIMARY_HOST → us-east IP
-# Update backend-config: swap cluster names
-# (Same YAML as step 5 above, but with swapped values)
+# StatefulSet override: PRIMARY_HOST now points to us-east
+kubectl --context $HUB apply -f - <<EOF
+apiVersion: placement.kubernetes-fleet.io/v1
+kind: ResourceOverride
+metadata:
+  name: pg-role-config
+  namespace: kubefleet-pg
+spec:
+  placement:
+    name: pg-app
+  resourceSelectors:
+    - group: apps
+      kind: StatefulSet
+      version: v1
+      name: postgres
+  policy:
+    overrideRules:
+      - clusterSelector:
+          clusterSelectorTerms:
+            - labelSelector:
+                matchLabels:
+                  role: primary
+        jsonPatchOverrides:
+          - op: replace
+            path: /spec/template/spec/containers/0/env/0/value
+            value: "primary"
+      - clusterSelector:
+          clusterSelectorTerms:
+            - labelSelector:
+                matchLabels:
+                  role: replica
+        jsonPatchOverrides:
+          - op: replace
+            path: /spec/template/spec/containers/0/env/0/value
+            value: "replica"
+          - op: replace
+            path: /spec/template/spec/containers/0/env/4/value
+            value: "${US_EAST_IP}"
+EOF
+
+# Backend override: swap cluster display names
+kubectl --context $HUB apply -f - <<'EOF'
+apiVersion: placement.kubernetes-fleet.io/v1
+kind: ResourceOverride
+metadata:
+  name: backend-config
+  namespace: kubefleet-pg
+spec:
+  placement:
+    name: pg-app
+  resourceSelectors:
+    - group: apps
+      kind: Deployment
+      version: v1
+      name: sample-backend
+  policy:
+    overrideRules:
+      - clusterSelector:
+          clusterSelectorTerms:
+            - labelSelector:
+                matchLabels:
+                  role: primary
+        jsonPatchOverrides:
+          - op: replace
+            path: /spec/template/spec/containers/0/env/0/value
+            value: "US-EAST (primary)"
+          - op: replace
+            path: /spec/template/spec/containers/0/env/6/value
+            value: "false"
+      - clusterSelector:
+          clusterSelectorTerms:
+            - labelSelector:
+                matchLabels:
+                  role: replica
+        jsonPatchOverrides:
+          - op: replace
+            path: /spec/template/spec/containers/0/env/0/value
+            value: "US-WEST (replica)"
+          - op: replace
+            path: /spec/template/spec/containers/0/env/6/value
+            value: "true"
+EOF
 ```
 
 ### Step 3: Delete PVCs
