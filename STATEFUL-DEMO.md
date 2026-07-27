@@ -285,26 +285,63 @@ Expected progression:
 3. `replica: Progressing=True` → pods deploy on us-east, PG runs `pg_basebackup`
 4. `replica: Succeeded=True` → done!
 
-### 8. Open the application UI in the browser
+### 8. Start Headlamp with the KubeFleet plugin
+
+```bash
+cd ~/kubefleet-headlamp-plugin
+npm install
+npm start                     # keep running in this terminal
+```
+
+In another terminal, start the Headlamp server:
+
+```bash
+docker rm -f headlamp 2>/dev/null
+docker run -d --name headlamp \
+  --network=host \
+  -u $(id -u):$(id -g) \
+  -v ~/.kube:/home/headlamp/.kube:ro \
+  -v ~/.config/Headlamp/plugins:/headlamp/plugins:ro \
+  ghcr.io/headlamp-k8s/headlamp:v0.41.0 \
+  -kubeconfig /home/headlamp/.kube/config -port 8090
+```
+
+Open `http://localhost:8090` → **KubeFleet Manager → Configure Plugin** and pick
+`kind-pg-hub` as the hub cluster.
+
+In **Member Clusters** you should see two entries:
+- `kind-pg-us-west` — labels `role=primary`, `region=us-west`
+- `kind-pg-us-east` — labels `role=replica`, `region=us-east`
+
+In **Staged Rollout Runs → `pg-deploy-001`** → **Stage Status** you should see
+both the `primary` and `replica` stages with `Succeeded=True`.
+
+In **Resource Overrides** click `pg-role-config` or `backend-config` to inspect
+the per-cluster JSON patches that set PG role and cluster display names.
+
+### 9. Open the application UI in the browser
 
 Port-forward the frontend on each cluster to different local ports:
 
 ```bash
-# Primary (us-west) on port 3001, Replica (us-east) on port 3002
-kubectl --context kind-pg-us-west -n kubefleet-pg port-forward svc/sample-frontend 3001:80 &
-kubectl --context kind-pg-us-east -n kubefleet-pg port-forward svc/sample-frontend 3002:80 &
+kubectl --context kind-pg-us-west -n kubefleet-pg port-forward \
+  svc/sample-frontend 3001:80 --address 0.0.0.0 &
+kubectl --context kind-pg-us-east -n kubefleet-pg port-forward \
+  svc/sample-frontend 3002:80 --address 0.0.0.0 &
 ```
 
 Open two browser tabs:
 
-| Tab | URL | Cluster |
-|-----|-----|---------|
-| Primary | http://localhost:3001 | US-WEST (primary) — read-write |
-| Replica | http://localhost:3002 | US-EAST (replica) — read-only |
+| Tab | URL | What you see |
+|-----|-----|--------------|
+| Primary | http://localhost:3001 | App bar shows **US-WEST (primary)** — full read-write |
+| Replica | http://localhost:3002 | App bar shows **US-EAST (replica)** — read-only |
 
-The cluster name and role are shown in the app bar at the top of the page.
+Both tabs show the same configuration data (9 seed rows from the PostgreSQL
+initialization). The data is identical because the replica streams from the
+primary via PostgreSQL streaming replication.
 
-### 9. Demonstrate stateful replication through the UI
+### 10. Demonstrate stateful replication through the UI
 
 1. **On the Primary tab** (http://localhost:3001):
    - Click the **+** button to add a new configuration entry
@@ -315,14 +352,19 @@ The cluster name and role are shown in the app bar at the top of the page.
 2. **Switch to the Replica tab** (http://localhost:3002):
    - **Refresh the page** — the same `demo.live` row appears, replicated from
      the primary's PostgreSQL to the replica via streaming replication
-   - Try adding or editing a row — the app shows an error: **"This replica is
-     read-only"**
+   - The data grid now shows 10 rows — the same as the primary
 
-This proves that data written on the primary cluster is automatically replicated
-to the replica cluster through PostgreSQL streaming replication, while write
-protection is enforced on the replica.
+3. **Try to write on the Replica tab**:
+   - Click the **+** button and try to add a row
+   - The app shows an error toast: **"This replica is read-only"**
+   - Try editing an existing row — same error
 
-> **Tip:** You can also verify via CLI:
+This proves the application is truly stateful: data written on the primary
+cluster is automatically and instantly replicated to the replica cluster through
+PostgreSQL streaming replication, while write protection is enforced on the
+replica.
+
+> **CLI verification** (optional):
 > ```bash
 > kubectl --context kind-pg-us-west -n kubefleet-pg port-forward svc/sample-backend 8001:8000 &
 > kubectl --context kind-pg-us-east -n kubefleet-pg port-forward svc/sample-backend 8002:8000 &
@@ -338,41 +380,6 @@ protection is enforced on the replica.
 > import sys,json
 > [print(f'{c[\"key\"]}={c[\"value\"]}') for c in json.load(sys.stdin) if 'replication' in c['key']]"
 > ```
-
-### 10. Visualize fleet state with Headlamp
-
-[Headlamp](https://headlamp.dev/) with the KubeFleet Manager plugin provides
-a visual dashboard for fleet resources.
-
-#### Install Headlamp
-
-Download the desktop app from https://headlamp.dev/docs/latest/installation/desktop/.
-
-#### Install the KubeFleet Manager plugin
-
-```bash
-# From the Headlamp UI: Settings → Plugins → search "kubefleet-manager" → Install
-# Or install from source:
-cd ~/kubefleet-headlamp-plugin
-npm install && npm run build
-# Copy the dist/ folder to your Headlamp plugins directory
-```
-
-#### Connect to the hub cluster
-
-1. Launch Headlamp and select the **kind-pg-hub** cluster context
-2. Navigate to **KubeFleet** in the sidebar (added by the plugin)
-3. You can see:
-   - **Member Clusters**: `kind-pg-us-west` (role=primary) and `kind-pg-us-east`
-     (role=replica) with their join status and labels
-   - **Cluster Resource Placements**: `pg-app` with its scheduling status
-   - **Cluster Staged Update Runs**: `pg-deploy-001` with stage-by-stage
-     progression (primary → timed wait → replica)
-   - **Resource Overrides**: `pg-role-config` and `backend-config` with their
-     per-cluster JSON patches
-
-This gives you a visual way to monitor the staged rollout and verify the fleet
-state during the demo.
 
 ---
 
@@ -514,6 +521,21 @@ EOF
 The staged rollout deploys the new primary (us-east) first, waits 30s for it to
 stabilize, then deploys the new replica (us-west) which runs `pg_basebackup`
 from us-east and starts streaming WAL.
+
+### Step 5: Verify the migration in the browser
+
+Once `pg-migrate-east` shows both stages `Succeeded`, refresh your browser tabs:
+
+| Tab | URL | What you see now |
+|-----|-----|------------------|
+| Former primary | http://localhost:3001 | App bar shows **US-WEST (replica)** — read-only |
+| Former replica | http://localhost:3002 | App bar shows **US-EAST (primary)** — full read-write |
+
+The roles have swapped. Write a new config on the **US-EAST** tab — it appears
+on the **US-WEST** tab after refresh, proving replication now flows east→west.
+
+In Headlamp → **Member Clusters**, the labels now show `kind-pg-us-east` with
+`role=primary` and `kind-pg-us-west` with `role=replica`.
 
 > **Note:** The seed data is reinitialized during migration (PVCs are deleted).
 > In production, you would use logical replication or `pg_basebackup` from the
