@@ -285,30 +285,94 @@ Expected progression:
 3. `replica: Progressing=True` → pods deploy on us-east, PG runs `pg_basebackup`
 4. `replica: Succeeded=True` → done!
 
-### 8. Verify replication
+### 8. Open the application UI in the browser
+
+Port-forward the frontend on each cluster to different local ports:
 
 ```bash
-# Port-forward both backends
-kubectl --context kind-pg-us-west -n kubefleet-pg port-forward svc/sample-backend 8001:8000 &
-kubectl --context kind-pg-us-east -n kubefleet-pg port-forward svc/sample-backend 8002:8000 &
-sleep 2
-
-# Write on primary
-curl -s -X POST http://localhost:8001/api/configs \
-  -H "Content-Type: application/json" \
-  -d '{"key":"test.replication","value":"hello from primary!","category":"limits"}'
-
-# Read from replica (should appear instantly)
-curl -s http://localhost:8002/api/configs | python3 -c "
-import sys,json
-[print(f'{c[\"key\"]}={c[\"value\"]}') for c in json.load(sys.stdin) if 'replication' in c['key']]"
-
-# Confirm replica blocks writes
-curl -s -X POST http://localhost:8002/api/configs \
-  -H "Content-Type: application/json" \
-  -d '{"key":"should.fail","value":"nope","category":"limits"}'
-# → {"detail":"This replica is read-only"}
+# Primary (us-west) on port 3001, Replica (us-east) on port 3002
+kubectl --context kind-pg-us-west -n kubefleet-pg port-forward svc/sample-frontend 3001:80 &
+kubectl --context kind-pg-us-east -n kubefleet-pg port-forward svc/sample-frontend 3002:80 &
 ```
+
+Open two browser tabs:
+
+| Tab | URL | Cluster |
+|-----|-----|---------|
+| Primary | http://localhost:3001 | US-WEST (primary) — read-write |
+| Replica | http://localhost:3002 | US-EAST (replica) — read-only |
+
+The cluster name and role are shown in the app bar at the top of the page.
+
+### 9. Demonstrate stateful replication through the UI
+
+1. **On the Primary tab** (http://localhost:3001):
+   - Click the **+** button to add a new configuration entry
+   - Set key to `demo.live`, value to `created during community call`, category
+     to `operations`
+   - The row appears in the data grid immediately
+
+2. **Switch to the Replica tab** (http://localhost:3002):
+   - **Refresh the page** — the same `demo.live` row appears, replicated from
+     the primary's PostgreSQL to the replica via streaming replication
+   - Try adding or editing a row — the app shows an error: **"This replica is
+     read-only"**
+
+This proves that data written on the primary cluster is automatically replicated
+to the replica cluster through PostgreSQL streaming replication, while write
+protection is enforced on the replica.
+
+> **Tip:** You can also verify via CLI:
+> ```bash
+> kubectl --context kind-pg-us-west -n kubefleet-pg port-forward svc/sample-backend 8001:8000 &
+> kubectl --context kind-pg-us-east -n kubefleet-pg port-forward svc/sample-backend 8002:8000 &
+> sleep 2
+>
+> # Write on primary
+> curl -s -X POST http://localhost:8001/api/configs \
+>   -H "Content-Type: application/json" \
+>   -d '{"key":"test.replication","value":"hello from primary!","category":"limits"}'
+>
+> # Read from replica (should appear instantly)
+> curl -s http://localhost:8002/api/configs | python3 -c "
+> import sys,json
+> [print(f'{c[\"key\"]}={c[\"value\"]}') for c in json.load(sys.stdin) if 'replication' in c['key']]"
+> ```
+
+### 10. Visualize fleet state with Headlamp
+
+[Headlamp](https://headlamp.dev/) with the KubeFleet Manager plugin provides
+a visual dashboard for fleet resources.
+
+#### Install Headlamp
+
+Download the desktop app from https://headlamp.dev/docs/latest/installation/desktop/.
+
+#### Install the KubeFleet Manager plugin
+
+```bash
+# From the Headlamp UI: Settings → Plugins → search "kubefleet-manager" → Install
+# Or install from source:
+cd ~/kubefleet-headlamp-plugin
+npm install && npm run build
+# Copy the dist/ folder to your Headlamp plugins directory
+```
+
+#### Connect to the hub cluster
+
+1. Launch Headlamp and select the **kind-pg-hub** cluster context
+2. Navigate to **KubeFleet** in the sidebar (added by the plugin)
+3. You can see:
+   - **Member Clusters**: `kind-pg-us-west` (role=primary) and `kind-pg-us-east`
+     (role=replica) with their join status and labels
+   - **Cluster Resource Placements**: `pg-app` with its scheduling status
+   - **Cluster Staged Update Runs**: `pg-deploy-001` with stage-by-stage
+     progression (primary → timed wait → replica)
+   - **Resource Overrides**: `pg-role-config` and `backend-config` with their
+     per-cluster JSON patches
+
+This gives you a visual way to monitor the staged rollout and verify the fleet
+state during the demo.
 
 ---
 
