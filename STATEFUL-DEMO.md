@@ -507,6 +507,16 @@ startup.
 
 ---
 
+## Cleanup
+
+Delete all Kind clusters:
+
+```bash
+kind delete cluster --name pg-hub
+kind delete cluster --name pg-us-west
+kind delete cluster --name pg-us-east
+```
+
 ## File Structure
 
 ```
