@@ -291,6 +291,7 @@ Expected progression:
 # Port-forward both backends
 kubectl --context kind-pg-us-west -n kubefleet-pg port-forward svc/sample-backend 8001:8000 &
 kubectl --context kind-pg-us-east -n kubefleet-pg port-forward svc/sample-backend 8002:8000 &
+sleep 2
 
 # Write on primary
 curl -s -X POST http://localhost:8001/api/configs \
