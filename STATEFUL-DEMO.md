@@ -119,6 +119,8 @@ kubectl --context $HUB apply -f k8s/stateful/frontend.yaml
 
 ### 4. Create KubeFleet CRP (External strategy)
 
+In Headlamp → **Resource Placements → + CREATE** (or `kubectl apply`):
+
 ```bash
 kubectl --context $HUB apply -f - <<'EOF'
 apiVersion: placement.kubernetes-fleet.io/v1
@@ -139,6 +141,11 @@ EOF
 ```
 
 ### 5. Create ResourceOverrides
+
+> **Apply via `kubectl`, not Headlamp's + CREATE form.** Headlamp's form
+> issues a PUT, which fails on a brand-new namespaced CRD with
+> `metadata.resourceVersion: Invalid value: 0`. Pipe the YAML into
+> `kubectl apply` instead.
 
 The `PRIMARY_HOST` env var in the StatefulSet base manifest is set to `"none"`
 (a non-empty placeholder). **K8s API omits `value: ""`**, which breaks JSON
@@ -234,6 +241,8 @@ EOF
 
 ### 6. Create staged rollout strategy + run
 
+In Headlamp → **Staged Rollout Strategies → + CREATE** (or `kubectl apply`):
+
 ```bash
 # Strategy: primary first, 30s wait, then replica
 kubectl --context $HUB apply -f - <<'EOF'
@@ -259,6 +268,7 @@ spec:
 EOF
 
 # Start the rollout
+# In Headlamp → Staged Rollout Runs → + CREATE, or:
 kubectl --context $HUB apply -f - <<'EOF'
 apiVersion: placement.kubernetes-fleet.io/v1
 kind: ClusterStagedUpdateRun
@@ -273,8 +283,10 @@ EOF
 
 ### 7. Watch the rollout
 
+In Headlamp → **Staged Rollout Runs → `pg-deploy-001`** → the **Stage Status**
+table updates live. Or poll from the terminal:
+
 ```bash
-# Poll stage status
 kubectl --context $HUB get csur pg-deploy-001 \
   -o jsonpath='{range .status.stagesStatus[*]}{.stageName}: {range .conditions[*]}{.type}={.status}({.reason}) {end}{"\n"}{end}'
 ```
@@ -343,26 +355,44 @@ primary via PostgreSQL streaming replication.
 
 ### 10. Demonstrate stateful replication through the UI
 
-1. **On the Primary tab** (http://localhost:3001):
-   - Click the **+** button to add a new configuration entry
-   - Set key to `demo.live`, value to `created during community call`, category
-     to `operations`
-   - The row appears in the data grid immediately
+**10a. Add a new configuration on the primary**
 
-2. **Switch to the Replica tab** (http://localhost:3002):
-   - **Refresh the page** — the same `demo.live` row appears, replicated from
-     the primary's PostgreSQL to the replica via streaming replication
-   - The data grid now shows 10 rows — the same as the primary
+On the **Primary tab** (http://localhost:3001):
+- Click the **+** button to add a new configuration entry
+- Set key to `demo.live`, value to `created during community call`, category
+  to `operations`
+- The row appears in the data grid immediately — it's stored in the primary's
+  PostgreSQL
 
-3. **Try to write on the Replica tab**:
-   - Click the **+** button and try to add a row
-   - The app shows an error toast: **"This replica is read-only"**
-   - Try editing an existing row — same error
+Switch to the **Replica tab** (http://localhost:3002) and **refresh the page** —
+the same `demo.live` row appears. The data grid now shows 10 rows, identical
+to the primary. This data was replicated automatically via PostgreSQL streaming
+replication — no application-level sync needed.
 
-This proves the application is truly stateful: data written on the primary
-cluster is automatically and instantly replicated to the replica cluster through
-PostgreSQL streaming replication, while write protection is enforced on the
-replica.
+**10b. Edit a value on the primary and watch it replicate**
+
+Back on the **Primary tab** (http://localhost:3001):
+- **Double-click** the `value` cell of `transaction.daily_limit` (currently
+  `50000`)
+- Change it to `75000` and press **Enter**
+- A green **"Updated"** toast confirms the write
+
+Switch to the **Replica tab** and **refresh** — the `transaction.daily_limit`
+row now shows `75000`. The edit was committed to the primary's PostgreSQL and
+streamed to the replica in real time.
+
+**10c. Confirm the replica is read-only**
+
+On the **Replica tab** (http://localhost:3002):
+- **Double-click** any value cell and try to change it — the app shows a red
+  error toast: **"This replica is read-only"**
+- Click the **+** button to add a row — same error
+- Click the **delete** icon on a row — same error
+
+This proves the application is truly stateful: data written or modified on
+the primary cluster is automatically and instantly replicated to the replica
+cluster through PostgreSQL streaming replication, while write protection is
+enforced on the replica.
 
 > **CLI verification** (optional):
 > ```bash
