@@ -104,16 +104,16 @@ elif [ "$ROLE" = "replica" ]; then
         sleep 2
     done
 
-    # If data directory is empty or stale, do a base backup
-    if [ ! -s "$PGDATA/PG_VERSION" ]; then
-        echo "Running pg_basebackup from primary..."
-        rm -rf "$PGDATA"
-        PGPASSWORD="$REPL_PASS" pg_basebackup \
-            -h "$PRI_HOST" -p "$PRI_PORT" -U "$REPL_USER" \
-            -D "$PGDATA" -Fp -Xs -P -R
+    # Always do a fresh base backup from the primary.
+    # This ensures correct data after role changes (e.g. old primary becoming
+    # a replica — its local data has a different timeline and can't be reused).
+    echo "Running pg_basebackup from primary..."
+    rm -rf "$PGDATA"
+    PGPASSWORD="$REPL_PASS" pg_basebackup \
+        -h "$PRI_HOST" -p "$PRI_PORT" -U "$REPL_USER" \
+        -D "$PGDATA" -Fp -Xs -P -R
 
-        echo "Base backup complete."
-    fi
+    echo "Base backup complete."
 
     # Ensure standby.signal exists and primary_conninfo is set
     touch "$PGDATA/standby.signal"
