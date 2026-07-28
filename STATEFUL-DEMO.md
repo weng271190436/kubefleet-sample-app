@@ -530,7 +530,7 @@ automatically:
   the primary, so it picks up all the data automatically
 
 ```bash
-# Delete the completed CSUR (only one active run per placement allowed)
+# Delete the old CSUR (avoid two runs competing over the same placement)
 kubectl --context $HUB delete csur pg-deploy-001
 
 # The same strategy works unchanged — it selects by role label,
