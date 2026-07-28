@@ -19,8 +19,8 @@ swapping the primary and replica roles through a staged rollout.
 │primary│ │replica│   Labels: role=primary/replica, region=us-west/us-east
 │       │ │       │
 │ PG ──────→ PG  │   Streaming replication via hostPort + Docker bridge
-│Backend│ │Backend│   Read-write vs read-only (enforced by app)
-│Frontend│ │Frontend│
+│Backend│ │Backend│   Read-write vs read-only (PG standby rejects writes;
+│Frontend│ │Frontend│    app also enforces via READ_ONLY env var for cleaner UX)
 └───────┘ └───────┘
 ```
 
