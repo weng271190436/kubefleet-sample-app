@@ -117,7 +117,39 @@ kubectl --context $HUB apply -f k8s/stateful/backend.yaml
 kubectl --context $HUB apply -f k8s/stateful/frontend.yaml
 ```
 
-### 4. Create KubeFleet CRP (External strategy)
+### 4. Start Headlamp with the KubeFleet plugin
+
+```bash
+cd ~/kubefleet-headlamp-plugin
+npm install
+npm start                     # keep running in this terminal
+```
+
+In another terminal, start the Headlamp server:
+
+```bash
+docker rm -f headlamp 2>/dev/null
+docker run -d --name headlamp \
+  --network=host \
+  -u $(id -u):$(id -g) \
+  -v ~/.kube:/home/headlamp/.kube:ro \
+  -v ~/.config/Headlamp/plugins:/headlamp/plugins:ro \
+  ghcr.io/headlamp-k8s/headlamp:v0.41.0 \
+  -kubeconfig /home/headlamp/.kube/config -port 8090
+```
+
+> **Port-in-use?** `--network=host` binds directly to the host. Check with
+> `ss -ltnp 'sport = :8090'`. Also remember to `docker rm -f headlamp` before
+> re-running — otherwise `docker run` fails with exit 125 (name conflict).
+
+Open `http://localhost:8090` → **KubeFleet Manager → Configure Plugin** and pick
+`kind-pg-hub` as the hub cluster.
+
+In **Member Clusters** you should see two entries:
+- `kind-pg-us-west` — labels `role=primary`, `region=us-west`
+- `kind-pg-us-east` — labels `role=replica`, `region=us-east`
+
+### 5. Create KubeFleet CRP (External strategy)
 
 In Headlamp → **Resource Placements → + CREATE** (or `kubectl apply`):
 
@@ -140,7 +172,7 @@ spec:
 EOF
 ```
 
-### 5. Create ResourceOverrides
+### 6. Create ResourceOverrides
 
 > **Apply via `kubectl`, not Headlamp's + CREATE form.** Headlamp's form
 > issues a PUT, which fails on a brand-new namespaced CRD with
@@ -239,7 +271,7 @@ spec:
 EOF
 ```
 
-### 6. Create staged rollout strategy + run
+### 7. Create staged rollout strategy + run
 
 In Headlamp → **Staged Rollout Strategies → + CREATE** (or `kubectl apply`):
 
@@ -281,7 +313,7 @@ spec:
 EOF
 ```
 
-### 7. Watch the rollout
+### 8. Watch the rollout
 
 In Headlamp → **Staged Rollout Runs → `pg-deploy-001`** → the **Stage Status**
 table updates live. Or poll from the terminal:
@@ -297,36 +329,8 @@ Expected progression:
 3. `replica: Progressing=True` → pods deploy on us-east, PG runs `pg_basebackup`
 4. `replica: Succeeded=True` → done!
 
-### 8. Start Headlamp with the KubeFleet plugin
-
-```bash
-cd ~/kubefleet-headlamp-plugin
-npm install
-npm start                     # keep running in this terminal
-```
-
-In another terminal, start the Headlamp server:
-
-```bash
-docker rm -f headlamp 2>/dev/null
-docker run -d --name headlamp \
-  --network=host \
-  -u $(id -u):$(id -g) \
-  -v ~/.kube:/home/headlamp/.kube:ro \
-  -v ~/.config/Headlamp/plugins:/headlamp/plugins:ro \
-  ghcr.io/headlamp-k8s/headlamp:v0.41.0 \
-  -kubeconfig /home/headlamp/.kube/config -port 8090
-```
-
-Open `http://localhost:8090` → **KubeFleet Manager → Configure Plugin** and pick
-`kind-pg-hub` as the hub cluster.
-
-In **Member Clusters** you should see two entries:
-- `kind-pg-us-west` — labels `role=primary`, `region=us-west`
-- `kind-pg-us-east` — labels `role=replica`, `region=us-east`
-
-In **Staged Rollout Runs → `pg-deploy-001`** → **Stage Status** you should see
-both the `primary` and `replica` stages with `Succeeded=True`.
+Once both stages show `Succeeded`, check in Headlamp → **Staged Rollout Runs →
+`pg-deploy-001`** → the Stage Status table shows both stages green.
 
 In **Resource Overrides** click `pg-role-config` or `backend-config` to inspect
 the per-cluster JSON patches that set PG role and cluster display names.
