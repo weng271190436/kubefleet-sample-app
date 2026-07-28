@@ -520,24 +520,14 @@ spec:
 EOF
 ```
 
-### Step 3: Reinitialize only the old primary (becoming replica)
+### Step 3: Create migration rollout
 
-The new primary (us-east, formerly the replica) **already has all the data** —
-the entrypoint detects `standby.signal` and promotes it by removing it.
-
-The old primary (us-west, becoming the new replica) needs a fresh
-`pg_basebackup` from the new primary, so we delete only **its** PVC:
-
-```bash
-# Only the OLD PRIMARY needs reinitialization — it becomes the new replica
-kubectl --context kind-pg-us-west -n kubefleet-pg delete pod postgres-0 --force --grace-period=0
-kubectl --context kind-pg-us-west -n kubefleet-pg delete pvc pgdata-postgres-0
-```
-
-The new primary's data (us-east) is untouched — all configs you added during
-the demo are preserved.
-
-### Step 4: Create migration rollout
+No manual PVC or pod deletion is needed. The entrypoint handles role transitions
+automatically:
+- **New primary (us-east):** detects `standby.signal`, removes it → promotes to
+  read-write with all data intact
+- **New replica (us-west):** entrypoint always runs a fresh `pg_basebackup` from
+  the primary, so it picks up all the data automatically
 
 ```bash
 # Stop old CSUR
@@ -567,7 +557,7 @@ The staged rollout:
    primary → starts streaming WAL. Gets all the data including anything you
    added during the demo.
 
-### Step 5: Verify the migration in the browser
+### Step 4: Verify the migration in the browser
 
 Once `pg-migrate-east` shows both stages `Succeeded`, refresh your browser tabs:
 
