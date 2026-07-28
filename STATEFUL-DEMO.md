@@ -530,8 +530,7 @@ automatically:
   the primary, so it picks up all the data automatically
 
 ```bash
-# Stop old CSUR
-kubectl --context $HUB patch csur pg-deploy-001 --type merge -p '{"spec":{"state":"Stop"}}'
+# Delete the completed CSUR (only one active run per placement allowed)
 kubectl --context $HUB delete csur pg-deploy-001
 
 # The same strategy works unchanged — it selects by role label,
