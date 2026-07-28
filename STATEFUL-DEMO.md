@@ -520,16 +520,22 @@ spec:
 EOF
 ```
 
-### Step 3: Delete PVCs
+### Step 3: Reinitialize only the old primary (becoming replica)
 
-Role change requires PG reinitialization (primary→replica data formats differ):
+The new primary (us-east, formerly the replica) **already has all the data** —
+the entrypoint detects `standby.signal` and promotes it by removing it.
+
+The old primary (us-west, becoming the new replica) needs a fresh
+`pg_basebackup` from the new primary, so we delete only **its** PVC:
 
 ```bash
-for ctx in kind-pg-us-west kind-pg-us-east; do
-  kubectl --context $ctx -n kubefleet-pg delete pod postgres-0 --force --grace-period=0
-  kubectl --context $ctx -n kubefleet-pg delete pvc pgdata-postgres-0
-done
+# Only the OLD PRIMARY needs reinitialization — it becomes the new replica
+kubectl --context kind-pg-us-west -n kubefleet-pg delete pod postgres-0 --force --grace-period=0
+kubectl --context kind-pg-us-west -n kubefleet-pg delete pvc pgdata-postgres-0
 ```
+
+The new primary's data (us-east) is untouched — all configs you added during
+the demo are preserved.
 
 ### Step 4: Create migration rollout
 
@@ -552,9 +558,14 @@ spec:
 EOF
 ```
 
-The staged rollout deploys the new primary (us-east) first, waits 30s for it to
-stabilize, then deploys the new replica (us-west) which runs `pg_basebackup`
-from us-east and starts streaming WAL.
+The staged rollout:
+1. **Primary stage (us-east):** The entrypoint sees `standby.signal` in the
+   existing data directory, removes it, and starts PG as a read-write primary.
+   All data from before the migration is preserved.
+2. **30s timed wait:** Gives the new primary time to stabilize.
+3. **Replica stage (us-west):** Fresh PVC → `pg_basebackup` from the new
+   primary → starts streaming WAL. Gets all the data including anything you
+   added during the demo.
 
 ### Step 5: Verify the migration in the browser
 
@@ -565,15 +576,13 @@ Once `pg-migrate-east` shows both stages `Succeeded`, refresh your browser tabs:
 | Former primary | http://localhost:3001 | App bar shows **US-WEST (replica)** — read-only |
 | Former replica | http://localhost:3002 | App bar shows **US-EAST (primary)** — full read-write |
 
-The roles have swapped. Write a new config on the **US-EAST** tab — it appears
-on the **US-WEST** tab after refresh, proving replication now flows east→west.
+The roles have swapped **and your data is preserved**. The configs you added in
+step 10 (like `demo.live`) are still there on both tabs. Write a new config on
+the **US-EAST** tab — it appears on the **US-WEST** tab after refresh, proving
+replication now flows east→west.
 
 In Headlamp → **Member Clusters**, the labels now show `kind-pg-us-east` with
 `role=primary` and `kind-pg-us-west` with `role=replica`.
-
-> **Note:** The seed data is reinitialized during migration (PVCs are deleted).
-> In production, you would use logical replication or `pg_basebackup` from the
-> old primary before the switch to preserve data.
 
 ---
 

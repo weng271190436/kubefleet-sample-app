@@ -74,6 +74,15 @@ EOF
         pg_ctl -D "$PGDATA" -m fast -w stop
     fi
 
+    # Handle promotion: if this was a replica being promoted to primary,
+    # remove standby.signal so PG starts as a read-write primary.
+    if [ -f "$PGDATA/standby.signal" ]; then
+        echo "PROMOTING: removing standby.signal (was a replica, now primary)"
+        rm -f "$PGDATA/standby.signal"
+        # Remove primary_conninfo so PG doesn't try to connect upstream
+        sed -i '/^primary_conninfo/d' "$PGDATA/postgresql.auto.conf" 2>/dev/null || true
+    fi
+
     exec postgres -D "$PGDATA"
 
 elif [ "$ROLE" = "replica" ]; then
