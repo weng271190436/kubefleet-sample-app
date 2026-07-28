@@ -556,6 +556,16 @@ The staged rollout:
    primary → starts streaming WAL. Gets all the data including anything you
    added during the demo.
 
+> **Split-brain warning:** During the timed wait between stages, **both
+> clusters run as primaries** — us-east has been promoted but us-west still has
+> the old `POSTGRES_ROLE=primary` env vars (the CSUR hasn't touched it yet).
+> Any writes to us-west during this window are **lost** when it later becomes a
+> replica (the entrypoint wipes the data directory and runs `pg_basebackup`
+> from the new primary). For this demo the 30s window is harmless — just don't
+> write to us-west while the rollout is in progress. In production, you would
+> fence writes on the old primary (set it read-only) before starting the
+> migration.
+
 ### Step 4: Verify the migration in the browser
 
 Once `pg-migrate-east` shows both stages `Succeeded`, refresh your browser tabs:
