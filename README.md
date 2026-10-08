@@ -37,6 +37,10 @@ kubectl apply -f k8s/backend.yaml -n kubefleet-sample
 kubectl apply -f k8s/frontend.yaml -n kubefleet-sample
 ```
 
+## Azure Fleet UpdateRun Diagnostics
+
+- [Reproduce retryable member error clearing after a maintenance window](FLEET-UPDATERUN-ERROR-CLEARING-REPRO.md)
+
 ## Future Plans
 - Add PostgreSQL database backend
 - Persistent storage via PVC
