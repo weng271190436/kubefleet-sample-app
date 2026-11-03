@@ -80,6 +80,11 @@ application resources.
   terminals only where specified. No Flux CLI, Git push, or Git credentials
   are required.
 
+These commands are intended for an interactive terminal and do not enable
+strict mode, which can exit your shell on a failed command or unset variable.
+If you already enabled it, run `set +e; set +u; set +o pipefail` first.
+If a command fails, stop and fix the error before continuing.
+
 Pinned versions:
 
 | Component | Version |
@@ -97,8 +102,6 @@ the node image below is published with Kind v0.33.0.
 These names intentionally differ from the staged-update demo and any existing fleet.
 
 ```bash
-set -euo pipefail
-
 export FLEET_DIR="$HOME/kubefleet"
 export APP_DIR="$HOME/kubefleet-sample-app"
 export HUB=kind-annotation-hub
