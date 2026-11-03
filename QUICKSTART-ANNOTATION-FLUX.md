@@ -28,13 +28,17 @@ both members; scaled both backends to `2/2`; and verified withdrawal/pruning.
 The corrected live commands were replayed end-to-end without intervention.
 Browser rendering was not verified: the integrated browser could not reach
 the remote host's loopback ports, although host-side HTTP checks passed.
+That rehearsal used the previous kubeconfig-based join. The standard-script
+join below replaces it; shell syntax and Helm rendering have been checked,
+but this revised bootstrap has not been live-retested.
 
 > **Experimental feature:** this guide targets the Fleet source checkout used
 > to prepare the demo (`137abce1`, November 3, 2026). It uses
 > `placement.kubefleet.dev/v1alpha1`, not the older
-> `placement.kubernetes-fleet.io` placement APIs. Do not copy the `0.3.1`
-> chart installation from the staged-update guide: build the hub/member
-> images and use the matching local charts below.
+> `placement.kubernetes-fleet.io` placement APIs. Build the hub/member
+> images and use the matching local charts below. The published `0.3.1`
+> member chart is used only to bootstrap the standard join script; the
+> subsequent local chart upgrade enables this experimental experience.
 >
 > **Trusted local lab only.** Annotation-based placement is an opt-in
 > capability with security implications. This demo assumes a single trusted
@@ -91,6 +95,7 @@ Pinned versions:
 | --- | --- |
 | Kubernetes | Kind node `v1.35.8` |
 | Fleet | Local source + local charts, same checkout for both agents |
+| Join bootstrap / refresh-token sidecar | Published chart `0.3.1` / image `v0.3.1` |
 | Flux | `v2.10.0` (source-controller and kustomize-controller `v1.10.1`) |
 | Git application manifests | Commit `dcf642603e012a7f785cffd342857d9053e6dd5a` |
 
@@ -165,19 +170,25 @@ kubectl --context "$HUB" get crd \
 
 Both CRDs must exist. Do not continue if Helm fails or either CRD is missing.
 
-## 4. Join the members using the local member chart
+## 4. Join the members using the standard quickstart script
 
-Use the chart's kubeconfig authentication mode so this local build does not
-need a separately built refresh-token sidecar. The hub controller grants the
-member ServiceAccount its member-specific permissions.
+Use the same `join-member-clusters.sh` as
+[QUICKSTART-ADVANCED.md](QUICKSTART-ADVANCED.md). It creates the member
+ServiceAccount, its long-lived `kubernetes.io/service-account-token` Secret,
+the MemberCluster, and the member-agent installation.
 
-The commands create **short-lived lab credentials** in Kubernetes Secrets,
-not in the repository. Do not enable shell tracing or paste the token into
-slides/logs. Tokens are requested for 24 hours; the API server may shorten
-that duration. Recreate the Secret and restart the member agent if it expires.
+The script installs a published member chart. Immediately upgrade that
+release using the local chart/image and enable the experimental placement
+APIs. Keep the standard Secret provider and published refresh-token sidecar;
+there is no custom kubeconfig or TokenRequest-based join flow.
+
+These Secret-backed tokens have no built-in expiry, unlike `kubectl create
+token`. Keep them out of source control, slides, and logs; do not enable shell
+tracing. The sidecar reads the Secret; its name does not imply token expiry.
 
 ```bash
 set +x
+JOIN_VERSION=0.3.1
 HUB_IP=$(docker inspect annotation-hub-control-plane \
   --format='{{(index .NetworkSettings.Networks "kind").IPAddress}}')
 test -n "$HUB_IP"
@@ -186,56 +197,22 @@ HUB_CA=$(kubectl config view --raw \
 test -n "$HUB_CA"
 
 for MEMBER in "$EAST" "$WEST"; do
-  SA="${MEMBER}-hub-access"
-  kubectl --context "$HUB" -n fleet-system create serviceaccount "$SA"
-  kubectl --context "$HUB" apply -f - <<EOF
-apiVersion: cluster.kubernetes-fleet.io/v1
-kind: MemberCluster
-metadata:
-  name: ${MEMBER}
-spec:
-  identity:
-    apiGroup: ""
-    kind: ServiceAccount
-    name: ${SA}
-    namespace: fleet-system
-  heartbeatPeriodSeconds: 15
-EOF
-
-  TOKEN=$(kubectl --context "$HUB" -n fleet-system create token "$SA" --duration=24h)
-  kubectl --context "$MEMBER" create namespace fleet-system
-  kubectl --context "$MEMBER" -n fleet-system create secret generic demo-hub-kubeconfig \
-    --from-file=kubeconfig=/dev/stdin <<EOF
-apiVersion: v1
-kind: Config
-clusters:
-  - name: hub
-    cluster:
-      server: https://${HUB_IP}:6443
-      certificate-authority-data: ${HUB_CA}
-users:
-  - name: member
-    user:
-      token: ${TOKEN}
-contexts:
-  - name: hub
-    context:
-      cluster: hub
-      user: member
-current-context: hub
-EOF
-  unset TOKEN
+  "$FLEET_DIR/hack/quickstart/join-member-clusters.sh" \
+    "$JOIN_VERSION" "$HUB" "https://${HUB_IP}:6443/" "$MEMBER"
 
   helm upgrade --install member-agent "$FLEET_DIR/charts/member-agent" \
     --kube-context "$MEMBER" \
     --namespace fleet-system \
+    --reset-values \
     --set image.repository=kubefleet/member-agent \
     --set image.tag=annotation-demo \
     --set image.pullPolicy=Never \
-    --set useKubeconfig=true \
-    --set config.hubKubeconfigSecretName=demo-hub-kubeconfig \
+    --set config.hubURL="https://${HUB_IP}:6443/" \
+    --set config.hubCA="$HUB_CA" \
     --set config.memberClusterName="$MEMBER" \
+    --set refreshtoken.tag="v${JOIN_VERSION}" \
     --set enablePlacementPolicyAPIs=true \
+    --set logFileMaxSize=100000 \
     --wait --timeout 5m
 done
 
@@ -255,6 +232,11 @@ kubectl --context "$HUB" get memberclusters \
 Both members should be joined. `region` in the annotation is shorthand for
 `topology.kubernetes.io/region`, a label on the hub-side **MemberCluster**,
 not on the member's Nodes.
+
+On fresh members, the helper's cleanup commands can report that the old
+`hub-kubeconfig-secret` or Helm release does not exist. Only those initial
+cleanup errors are expected; installation errors or a failed `Joined` wait
+must be resolved before continuing.
 
 ## 5. Prepare Flux: CRDs on the hub, controllers on the members
 
@@ -708,7 +690,7 @@ on a machine hosting other demos.
 | Flux source not ready | Inspect member GitRepository events; members need HTTPS access to GitHub. |
 | Flux build includes unrelated resources | Preserve the GitRepository `ignore` rules and the pinned Git commit. Do not point at all of `k8s` recursively without exclusions. |
 | `ImagePullBackOff` / `ErrImageNeverPull` | Check exact local image names, Kind image loads, and Flux `spec.images`; inspect pod events. |
-| Member agent becomes unauthorized later | The lab token may have expired. Recreate its kubeconfig Secret with a fresh token and restart that member-agent Deployment. |
+| Member agent is unauthorized | Check the ServiceAccount/token Secret created by the join script and `hub-kubeconfig-secret` in the member's `default` namespace. Verify the MemberCluster identity and refresh-token sidecar logs; these Secret-backed tokens have no built-in expiry. |
 | App resources stay after withdrawal | Check Flux prune/deletion policy and member finalizers; do not stop Flux before cleanup. |
 
 Prefer CLI for the generated alpha PlacementPolicy objects unless the
