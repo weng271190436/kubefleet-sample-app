@@ -41,6 +41,10 @@ kubectl apply -f k8s/frontend.yaml -n kubefleet-sample
 
 - [Reproduce retryable member error clearing after a maintenance window](FLEET-UPDATERUN-ERROR-CLEARING-REPRO.md)
 
+## Community Call Demos
+
+- [Annotation-based placement and annotating Flux API objects](QUICKSTART-ANNOTATION-FLUX.md)
+
 ## Future Plans
 - Add PostgreSQL database backend
 - Persistent storage via PVC
