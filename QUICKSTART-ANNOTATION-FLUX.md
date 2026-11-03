@@ -11,7 +11,7 @@ and Flux deploys the application independently on each selected member.
 | --- | --- |
 | Place a ConfigMap with one annotation | No hand-written placement YAML |
 | Change the annotation | Expand from one region to the whole fleet |
-| Inspect the generated PlacementPolicy | The annotation is a shortcut, not a second placement engine |
+| Inspect the generated PlacementPolicy in Headlamp | Source ownership, selectors, conditions, cluster counts, and per-cluster bindings |
 | Annotate a GitRepository and a Flux Kustomization | Fleet distributes the GitOps instructions, not the application manifests |
 | Open the sample app on both members | Member-local Flux controllers deploy the application |
 | Patch the hub-side Flux Kustomization | Fleet delivers the new instructions; Flux scales the backend |
@@ -26,10 +26,12 @@ data updates, and invalid-annotation recovery; deployed the app through
 annotated Flux objects; checked frontend HTTP and the proxied backend API on
 both members; scaled both backends to `2/2`; and verified withdrawal/pruning.
 The corrected live commands were replayed end-to-end without intervention.
-Browser rendering was not verified: the integrated browser could not reach
+Sample-app browser rendering was not verified: the integrated browser could not reach
 the remote host's loopback ports, although host-side HTTP checks passed.
 Node-identity injection was also verified on both members through the
 frontend's proxied `/api/cluster-info` endpoint.
+The Headlamp alpha policy list and namespaced detail pages were separately
+browser-tested against the live hub.
 That rehearsal used the previous kubeconfig-based join. The standard-script
 join below replaces it; shell syntax and Helm rendering have been checked,
 but this revised bootstrap has not been live-retested.
@@ -76,6 +78,8 @@ application resources.
 - Docker, Kind **v0.32.0 or newer**, Helm 3, and kubectl compatible with Kubernetes 1.35.
   Rehearsed with Kind v0.32.0, Helm v3.16.4, and kubectl v1.36.1.
 - Local clones at `~/kubefleet` and `~/kubefleet-sample-app`.
+- Git, Node.js, and npm for the Headlamp plugin. Its development workflow
+  was tested with Node.js v24.17.0 and npm v12.0.2.
 - Internet access for the initial image builds, Flux installation, and public Git fetches.
 - At least **20 GiB free disk** (25 GiB recommended), plus enough memory for
   three additional single-node Kind clusters and image builds. Compiler and
@@ -99,6 +103,8 @@ Pinned versions:
 | Fleet | Local source + local charts, same checkout for both agents |
 | Join bootstrap / refresh-token sidecar | Published chart `0.3.2` / image `v0.3.2` |
 | Flux | `v2.10.0` (source-controller and kustomize-controller `v1.10.1`) |
+| Headlamp | `v0.41.0` |
+| KubeFleet Headlamp plugin | [`feat/alpha-placement-policies`](https://github.com/kubefleet-dev/kubefleet-headlamp-plugin/tree/feat/alpha-placement-policies), verified at `a88c1de` |
 | Git application manifests | Commit `dcf642603e012a7f785cffd342857d9053e6dd5a` |
 
 Flux v2.10.0 supports Kubernetes 1.35.2 and newer in the 1.35 series;
@@ -240,7 +246,9 @@ On fresh members, the helper's cleanup commands can report that the old
 cleanup errors are expected; installation errors or a failed `Joined` wait
 must be resolved before continuing.
 
-## 5. Prepare Flux: CRDs on the hub, controllers on the members
+## 5. Prepare Flux and Headlamp
+
+### 5a. Flux: CRDs on the hub, controllers on the members
 
 Install the source and Kustomization CRDs on the hub **before creating the
 Flux objects**. Do not install Flux controllers there: otherwise the hub
@@ -281,9 +289,83 @@ The published Flux install includes additional controllers; only
 source-controller and kustomize-controller participate in this demo.
 Fleet can discover custom resources added after the hub agent starts.
 
+### 5b. Build the Headlamp plugin with alpha PlacementPolicy support
+
+Use the feature branch below: the published plugin v0.2.2 does not include
+the new **Placement Policies (Alpha)** pages. The branch adds read-only
+inspection of `PlacementPolicy` and `ClusterPlacementPolicy`; the older
+**Resource Placements** pages still show CRP/RP resources.
+
+In a **new terminal**, clone the plugin if you do not already have it:
+
+```bash
+git clone --branch feat/alpha-placement-policies \
+  https://github.com/kubefleet-dev/kubefleet-headlamp-plugin.git \
+  "$HOME/kubefleet-headlamp-plugin"
+```
+
+For an **existing clone**, use this instead. Save any local work first; do
+not reset or discard it to switch branches.
+
+```bash
+cd "$HOME/kubefleet-headlamp-plugin"
+git fetch origin
+git switch feat/alpha-placement-policies
+git pull --ff-only origin feat/alpha-placement-policies
+```
+
+Then install dependencies and start the plugin's development build:
+
+```bash
+cd "$HOME/kubefleet-headlamp-plugin"
+npm ci
+npm start
+```
+
+Wait for the first successful build. This installs the plugin into
+`~/.config/Headlamp/plugins/kubefleet-manager`. **Keep this terminal running**
+so subsequent changes are rebuilt.
+
+### 5c. Start Headlamp and select the demo hub
+
+In **another terminal**:
+
+```bash
+docker run --rm --name headlamp-annotation-demo \
+  --network=host \
+  -u "$(id -u):$(id -g)" \
+  -e HOME=/tmp/headlamp \
+  -v "$HOME/.kube:/home/headlamp/.kube:ro" \
+  -v "$HOME/.config/Headlamp/plugins:/headlamp/plugins:ro" \
+  ghcr.io/headlamp-k8s/headlamp:v0.41.0 \
+  -kubeconfig /home/headlamp/.kube/config \
+  -plugins-dir /headlamp/plugins \
+  -listen-addr 127.0.0.1 \
+  -port 8090
+```
+
+Keep it running. Host networking lets Headlamp reach the Kind API endpoints
+in your kubeconfig; `-listen-addr` limits Headlamp itself to localhost.
+If port 8090 is occupied, choose another port and update the browser URL.
+If working through Remote SSH, forward that port to your local machine.
+
+Open <http://localhost:8090>:
+
+1. Select **kind-annotation-hub** in Headlamp's cluster chooser.
+2. Open **KubeFleet Manager → Configure Plugin**, select
+   **kind-annotation-hub**, and **Save Hub Cluster**.
+3. Open **Placement Policies (Alpha)**, not **Resource Placements**.
+4. Confirm the page identifies `kind-annotation-hub` as the hub. An empty
+   table is expected before section 6.
+
+These pages are **read-only**. Keep using the CLI commands below to annotate
+resources, enable auto-rollout, and change Flux instructions. Do not edit
+generated policy specs through Headlamp's generic resource editor.
+
 **Preflight before going live:** the three Fleet agents and both member
-source/kustomize controllers must be ready. The remaining sections are the
-live demo.
+source/kustomize controllers must be ready, and Headlamp must show the
+**Placement Policies (Alpha)** page on the correct hub. Keep the main CLI
+and Headlamp available; open the two application browser tabs in section 9.
 
 ## 6. One annotation places a ConfigMap in one region
 
@@ -305,6 +387,21 @@ kubectl --context "$WEST" -n annotation-demo get configmap call-message \
 ```
 
 **Expected:** east has the ConfigMap; west prints nothing.
+
+In **Headlamp → Placement Policies (Alpha)**, use the table search for
+`call-message` and open its generated policy:
+
+- **Kind:** `PlacementPolicy`; **Namespace:** `annotation-demo`.
+- **Source:** `Annotation-generated: ConfigMap/call-message` in the details.
+- **Scheduled / Desired**, **Synchronized / Desired**, and
+  **Available / Desired:** eventually `1 / 1`.
+- **Cluster Selectors:** `eastus` under `topology.kubernetes.io/region`.
+- **Per-cluster Bindings:** only `kind-annotation-east`, with a processed
+  snapshot matching its desired snapshot.
+
+The **Conditions** section shows scheduling, resource collection,
+synchronization, and availability separately. Old-generation conditions
+are shown as pending rather than as current success.
 
 Show what Fleet generated:
 
@@ -367,6 +464,12 @@ done
 
 **Expected:** both print `One annotation, both clusters`.
 
+Return to the same Headlamp policy detail. The three cluster-count summaries
+should now show `2 / 2`, **Per-cluster Bindings** should include both east and
+west, and **Latest Resource Revision** should reflect the updated snapshot.
+**Auto-rollout** should show enabled with a minimum interval annotation of
+`1m`. The view updates automatically; wait for reconciliation to settle.
+
 Auto-rollout has no staged gates or baking period; it is appropriate here
 for lab configuration. Use staged update runs for controlled production
 changes. The minimum interval applies between auto-rollout attempts, not
@@ -410,6 +513,10 @@ kubectl --context "$HUB" -n annotation-demo annotate configmap call-message \
 leaves the last valid generated policy in place; it does not withdraw a
 running placement. Removing the annotation is different: that deletes the
 generated policy.
+
+Headlamp continues to show the last valid generated policy during this
+failure beat. The invalid-annotation warning belongs to the source ConfigMap;
+show it with the event command above, not as a policy validation error.
 
 ## 8. Create annotated Flux API objects on the hub
 
@@ -502,6 +609,13 @@ kubectl --context "$HUB" -n annotation-demo get \
 object. Both need the annotation: annotating the Kustomization does **not**
 automatically place the GitRepository named by `sourceRef`.
 
+In **Headlamp → Placement Policies (Alpha)**, search for `sample-app`.
+Show the two policies with sources **GitRepository/sample-app** and
+**Kustomization/sample-app**. Open the Kustomization policy and point out its
+resource selector's API group, `kustomize.toolkit.fluxcd.io`, and its east/west
+bindings. Including the earlier ConfigMap, this demo now has three generated
+namespaced PlacementPolicies.
+
 For private repositories, referenced credentials must also be made available
 on each member; this public-repository demo deliberately needs no Git Secret.
 Flux CRDs/controllers are platform prerequisites, not dependencies Fleet
@@ -511,6 +625,11 @@ The policies are independent: the Kustomization can arrive before its source.
 A transient `SourceNotFound` while they converge is normal; Flux retries.
 Do not treat Fleet's policy availability as proof that the app is healthy:
 check Flux `Ready` and the actual member Deployments next.
+
+**Presenter distinction:** Headlamp's policy/binding counts describe the
+Flux objects Fleet delivers. They do not prove that Flux has deployed a
+healthy backend/frontend. Use the member-side checks and application tabs
+below for that.
 
 ## 9. Verify Flux reconciliation on both members
 
@@ -630,6 +749,13 @@ done
 
 **Expected:** `sample-backend` is `2/2` on each member.
 
+In Headlamp, reopen the Kustomization policy. Show **Auto-rollout** enabled,
+the changed **Latest Resource Revision**, and the matching desired/processed
+snapshots on both bindings. The policy's cluster counts stay `2 / 2`: scaling
+the app changes backend replicas, not the number of selected clusters.
+Use the deployment output above to demonstrate the two backend replicas;
+the read-only policy page does not display member Pod counts.
+
 This is a scaling demonstration, not a stateful/HA deployment: backend data
 is in memory **per Pod**, so keep this beat read-only. Multiple replicas do
 not share UI edits.
@@ -689,6 +815,10 @@ kubectl --context "$HUB" -n annotation-demo get configmap/call-message \
 The original hub objects still exist, without the placement annotation.
 Member app resources and the placed Flux objects are gone.
 
+Headlamp's generated policy rows should disappear as their source
+annotations are removed. This is withdrawal through source intent, not
+deleting controller-managed policy objects from the UI.
+
 If cleanup stalls, inspect the member Flux Kustomization's events/finalizers
 and keep its Flux controllers running. Do not remove finalizers to force a
 successful-looking demo. If you choose `prune: false` or `deletionPolicy:
@@ -697,6 +827,10 @@ Orphan` in another scenario, removing placement will not imply app deletion.
 ## 12. Tear down only this demo's clusters
 
 After the live call, and only if you no longer need these three clusters:
+
+Stop both frontend port-forwards, the Headlamp container, and `npm start`
+with **Ctrl-C** in their own terminals. The Headlamp container uses `--rm`
+and removes itself on exit. Do not stop or remove other Headlamp instances.
 
 ```bash
 for cluster in annotation-east annotation-west annotation-hub; do
@@ -716,6 +850,10 @@ on a machine hosting other demos.
 | Symptom | Check |
 | --- | --- |
 | No generated policy | Both hub flags enabled? Source annotation spelled correctly? Inspect source-object events for `InvalidClusterSelectorsAnnotation`, `PlacementPolicyConflict`, or `AnnotationPlacementBlocked`. |
+| No Headlamp alpha menu | Use the `feat/alpha-placement-policies` branch, wait for a successful `npm start` build, and reload Headlamp. Published v0.2.2 lacks this menu. |
+| Headlamp policy list is empty or shows the wrong fleet | Save `kind-annotation-hub` in Configure Plugin and use **Placement Policies (Alpha)**, not the legacy Resource Placements page. |
+| Headlamp reports missing APIs or access denied | Confirm alpha CRDs exist on the configured hub. The viewer needs `get/list/watch` on the policy and binding resources in `placement.kubefleet.dev`; do not hide a 403 as an empty list. |
+| Headlamp is Ready but the app is not | Policy availability covers the placed Flux API objects. Inspect member-side Flux `Ready`, events, and actual application Deployments. |
 | Member not selected | Region labels belong on the hub MemberCluster; check case, count, taints, and cluster health. Inspect policy status and ClusterClaims. |
 | Initial placement works but a source edit does not propagate | Inspect policy `Synchronized`: `ResourcesChangedPendingRollout` means a new rollout is needed. Enable auto-rollout on the generated policy as above, or create a staged update run. |
 | Work exists but no Flux object on member | Member `enablePlacementPolicyAPIs=true`? Inspect `works.placement.kubefleet.dev` in that member's hub namespace and member-agent logs. |
@@ -727,8 +865,9 @@ on a machine hosting other demos.
 | Member agent is unauthorized | Check the ServiceAccount/token Secret created by the join script and `hub-kubeconfig-secret` in the member's `default` namespace. Verify the MemberCluster identity and refresh-token sidecar logs; these Secret-backed tokens have no built-in expiry. |
 | App resources stay after withdrawal | Check Flux prune/deletion policy and member finalizers; do not stop Flux before cleanup. |
 
-Prefer CLI for the generated alpha PlacementPolicy objects unless the
-Headlamp plugin version explicitly supports `placement.kubefleet.dev`.
+Use Headlamp for read-only inspection and the CLI for the mutations in this
+walkthrough. The new alpha views do not provide an auto-rollout toggle or
+edit/delete controls.
 
 ### Suggested closing
 
@@ -741,6 +880,8 @@ Headlamp plugin version explicitly supports `placement.kubefleet.dev`.
 
 - [Fleet annotation controller and parser](https://github.com/kubefleet-dev/kubefleet/tree/137abce1/pkg/v1/controllers/annotationplacement)
 - [Fleet hub chart feature flags](https://github.com/kubefleet-dev/kubefleet/blob/137abce1/charts/hub-agent/values.yaml)
+- [Headlamp plugin with alpha placement policy support](https://github.com/kubefleet-dev/kubefleet-headlamp-plugin/tree/feat/alpha-placement-policies)
+- [Verified Headlamp plugin implementation](https://github.com/kubefleet-dev/kubefleet-headlamp-plugin/commit/a88c1ded9fb9502d7ec9dfc590eaa9999df04e93)
 - [Flux v2.10.0 and Kubernetes compatibility](https://github.com/fluxcd/flux2/releases/tag/v2.10.0)
 - [Kind v0.33.0 node images](https://github.com/kubernetes-sigs/kind/releases/tag/v0.33.0)
 - [Flux GitRepository](https://fluxcd.io/flux/components/source/gitrepositories/)
