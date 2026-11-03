@@ -28,6 +28,8 @@ both members; scaled both backends to `2/2`; and verified withdrawal/pruning.
 The corrected live commands were replayed end-to-end without intervention.
 Browser rendering was not verified: the integrated browser could not reach
 the remote host's loopback ports, although host-side HTTP checks passed.
+Node-identity injection was also verified on both members through the
+frontend's proxied `/api/cluster-info` endpoint.
 That rehearsal used the previous kubeconfig-based join. The standard-script
 join below replaces it; shell syntax and Helm rendering have been checked,
 but this revised bootstrap has not been live-retested.
@@ -417,7 +419,10 @@ commit, so no publish step is required during the call.
 The GitRepository excludes the unrelated Cilium and stateful subdirectories.
 Flux will generate a Kustomize build for the three remaining YAML files in
 `./k8s`. The Flux Kustomization redirects the published image names to the
-local images loaded in section 2.
+local images loaded in section 2. Its backend patch replaces the default
+`CLUSTER_NAME=unknown` with the Pod's node name through the Kubernetes
+Downward API. Each single-node Kind member therefore identifies itself
+without a separate manifest per cluster.
 
 ```bash
 cat > "$DEMO_DIR/flux-app.yaml" <<'EOF'
@@ -463,6 +468,27 @@ spec:
     - name: ghcr.io/weng271190436/kubefleet-sample-app/frontend
       newName: kubefleet-sample-frontend
       newTag: annotation-demo
+  patches:
+    - target:
+        kind: Deployment
+        name: sample-backend
+      patch: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: sample-backend
+        spec:
+          template:
+            spec:
+              containers:
+                - name: backend
+                  env:
+                    - name: CLUSTER_NAME
+                      value: null
+                      valueFrom:
+                        fieldRef:
+                          apiVersion: v1
+                          fieldPath: spec.nodeName
 EOF
 
 kubectl --context "$HUB" apply -f "$DEMO_DIR/flux-app.yaml"
@@ -543,10 +569,15 @@ kubectl --context kind-annotation-west -n kubefleet-sample \
 Open <http://localhost:8081> and <http://localhost:8082>.
 If either port is in use, choose another local port.
 
-Both should display the sample app. The `Serving from:` value can be
-`unknown`: this demo does not add the staged-update guide's cluster-name
-override. The backends are independent, with in-memory data; UI edits are
-not replicated between clusters.
+Both should display the sample app, with distinct identities:
+
+- East: **Serving from: annotation-east-control-plane**
+- West: **Serving from: annotation-west-control-plane**
+
+These are node names, not Fleet MemberCluster names; they identify the
+members here because each Kind cluster has one node. The backends are
+independent, with in-memory data; UI edits are not replicated between
+clusters. Refresh the browser after a backend rollout to reload the identity.
 
 > **Say:** "Fleet decides where the GitOps objects go. Each member's Flux
 > controllers fetch the same Git revision and reconcile the application locally.
@@ -561,6 +592,8 @@ replicas on each member.
 As with the ConfigMap, explicitly enable auto-rollout on the generated
 Kustomization policy so that Fleet rolls out the changed Flux instructions.
 This is a policy **annotation**, not a change to its generated spec.
+Append the replica patch to the existing patch list so the node-identity
+patch from section 8 remains in effect.
 
 ```bash
 kubectl --context "$HUB" -n annotation-demo annotate \
@@ -571,20 +604,20 @@ kubectl --context "$HUB" -n annotation-demo annotate \
 
 kubectl --context "$HUB" -n annotation-demo patch \
   kustomizations.kustomize.toolkit.fluxcd.io/sample-app \
-  --type merge --patch '
-{
-  "spec": {
-    "patches": [
-      {
-        "target": {
-          "kind": "Deployment",
-          "name": "sample-backend"
-        },
-        "patch": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: sample-backend\nspec:\n  replicas: 2\n"
-      }
-    ]
+  --type json --patch '
+[
+  {
+    "op": "add",
+    "path": "/spec/patches/-",
+    "value": {
+      "target": {
+        "kind": "Deployment",
+        "name": "sample-backend"
+      },
+      "patch": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: sample-backend\nspec:\n  replicas: 2\n"
+    }
   }
-}'
+]'
 
 for MEMBER in "$EAST" "$WEST"; do
   kubectl --context "$MEMBER" -n kubefleet-sample wait \
@@ -690,6 +723,7 @@ on a machine hosting other demos.
 | Flux source not ready | Inspect member GitRepository events; members need HTTPS access to GitHub. |
 | Flux build includes unrelated resources | Preserve the GitRepository `ignore` rules and the pinned Git commit. Do not point at all of `k8s` recursively without exclusions. |
 | `ImagePullBackOff` / `ErrImageNeverPull` | Check exact local image names, Kind image loads, and Flux `spec.images`; inspect pod events. |
+| `Serving from: unknown` | Confirm the hub Flux Kustomization includes the node-identity patch, enable policy auto-rollout if updating an existing placement, wait for the backend rollout, and refresh the browser. Do not patch member Deployments directly: Flux would revert those edits. |
 | Member agent is unauthorized | Check the ServiceAccount/token Secret created by the join script and `hub-kubeconfig-secret` in the member's `default` namespace. Verify the MemberCluster identity and refresh-token sidecar logs; these Secret-backed tokens have no built-in expiry. |
 | App resources stay after withdrawal | Check Flux prune/deletion policy and member finalizers; do not stop Flux before cleanup. |
 
