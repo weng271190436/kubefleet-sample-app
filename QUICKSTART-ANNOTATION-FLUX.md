@@ -36,7 +36,7 @@ but this revised bootstrap has not been live-retested.
 > to prepare the demo (`137abce1`, November 3, 2026). It uses
 > `placement.kubefleet.dev/v1alpha1`, not the older
 > `placement.kubernetes-fleet.io` placement APIs. Build the hub/member
-> images and use the matching local charts below. The published `0.3.1`
+> images and use the matching local charts below. The published `0.3.2`
 > member chart is used only to bootstrap the standard join script; the
 > subsequent local chart upgrade enables this experimental experience.
 >
@@ -95,7 +95,7 @@ Pinned versions:
 | --- | --- |
 | Kubernetes | Kind node `v1.35.8` |
 | Fleet | Local source + local charts, same checkout for both agents |
-| Join bootstrap / refresh-token sidecar | Published chart `0.3.1` / image `v0.3.1` |
+| Join bootstrap / refresh-token sidecar | Published chart `0.3.2` / image `v0.3.2` |
 | Flux | `v2.10.0` (source-controller and kustomize-controller `v1.10.1`) |
 | Git application manifests | Commit `dcf642603e012a7f785cffd342857d9053e6dd5a` |
 
@@ -188,7 +188,7 @@ tracing. The sidecar reads the Secret; its name does not imply token expiry.
 
 ```bash
 set +x
-JOIN_VERSION=0.3.1
+JOIN_VERSION=0.3.2
 HUB_IP=$(docker inspect annotation-hub-control-plane \
   --format='{{(index .NetworkSettings.Networks "kind").IPAddress}}')
 test -n "$HUB_IP"
